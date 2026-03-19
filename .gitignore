@@ -1,0 +1,7 @@
+venv/
+*.pyc
+__pycache__/
+.env
+bot.log
+bot.pid
+.notify_*
