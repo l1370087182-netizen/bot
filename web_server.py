@@ -9,7 +9,8 @@ import sys
 import json
 import time
 import sqlite3
-import threading
+import subprocess
+import signal
 from datetime import datetime
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
@@ -25,6 +26,147 @@ BOT_DIR = os.path.dirname(os.path.abspath(__file__))
 STATUS_FILE = os.path.join(BOT_DIR, '.bot_status')
 DB_FILE = os.path.join(BOT_DIR, 'trades.db')
 LOG_FILE = os.path.join(BOT_DIR, 'bot.log')
+BOT_SCRIPT = os.path.join(BOT_DIR, 'bot.py')
+PID_FILE = os.path.join(BOT_DIR, 'bot.pid')
+
+# 机器人进程管理
+bot_process = None
+
+class BotManager:
+    """机器人进程管理器"""
+    
+    @staticmethod
+    def is_running():
+        """检查机器人是否运行"""
+        try:
+            if os.path.exists(PID_FILE):
+                with open(PID_FILE, 'r') as f:
+                    pid = int(f.read().strip())
+                # 检查进程是否存在
+                os.kill(pid, 0)
+                return True
+        except:
+            pass
+        return False
+    
+    @staticmethod
+    def start():
+        """启动机器人"""
+        global bot_process
+        if BotManager.is_running():
+            return {'success': False, 'message': '机器人已在运行'}
+        
+        try:
+            # 使用nohup启动机器人
+            bot_process = subprocess.Popen(
+                ['python3', BOT_SCRIPT, '--real'],
+                stdout=open(os.path.join(BOT_DIR, 'bot.log'), 'a'),
+                stderr=subprocess.STDOUT,
+                cwd=BOT_DIR
+            )
+            
+            # 保存PID
+            with open(PID_FILE, 'w') as f:
+                f.write(str(bot_process.pid))
+            
+            return {'success': True, 'message': f'机器人已启动 (PID: {bot_process.pid})'}
+        except Exception as e:
+            return {'success': False, 'message': f'启动失败: {str(e)}'}
+    
+    @staticmethod
+    def stop():
+        """停止机器人"""
+        try:
+            if os.path.exists(PID_FILE):
+                with open(PID_FILE, 'r') as f:
+                    pid = int(f.read().strip())
+                
+                # 发送终止信号
+                os.kill(pid, signal.SIGTERM)
+                
+                # 等待进程结束
+                time.sleep(2)
+                
+                # 强制结束
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except:
+                    pass
+                
+                # 删除PID文件
+                os.remove(PID_FILE)
+                
+                return {'success': True, 'message': '机器人已停止'}
+            else:
+                return {'success': False, 'message': '机器人未运行'}
+        except Exception as e:
+            return {'success': False, 'message': f'停止失败: {str(e)}'}
+    
+    @staticmethod
+    def restart():
+        """重启机器人"""
+        BotManager.stop()
+        time.sleep(3)
+        return BotManager.start()
+
+class LogReader:
+    """日志读取器"""
+    
+    @staticmethod
+    def get_recent_logs(lines=100):
+        """获取最近日志"""
+        try:
+            if not os.path.exists(LOG_FILE):
+                return []
+            
+            with open(LOG_FILE, 'r') as f:
+                all_logs = f.readlines()
+            
+            # 返回最后N行
+            recent_logs = all_logs[-lines:]
+            
+            # 解析日志
+            parsed = []
+            for line in recent_logs:
+                line = line.strip()
+                if line:
+                    # 简单解析日志级别
+                    level = 'INFO'
+                    if 'ERROR' in line or '❌' in line:
+                        level = 'ERROR'
+                    elif 'WARNING' in line or '⚠️' in line:
+                        level = 'WARNING'
+                    elif 'CRITICAL' in line or '🚨' in line:
+                        level = 'CRITICAL'
+                    elif 'BUY' in line or 'SELL' in line or '🎯' in line:
+                        level = 'TRADE'
+                    
+                    parsed.append({
+                        'line': line,
+                        'level': level,
+                        'timestamp': line[:19] if len(line) > 19 else ''
+                    })
+            
+            return parsed
+        except Exception as e:
+            return [{'line': f'读取日志错误: {str(e)}', 'level': 'ERROR'}]
+    
+    @staticmethod
+    def search_logs(keyword, lines=50):
+        """搜索日志"""
+        try:
+            if not os.path.exists(LOG_FILE):
+                return []
+            
+            with open(LOG_FILE, 'r') as f:
+                all_logs = f.readlines()
+            
+            # 搜索关键词
+            matched = [line.strip() for line in all_logs if keyword in line]
+            
+            return matched[-lines:]
+        except Exception as e:
+            return [f'搜索错误: {str(e)}']
 
 class WebDashboard:
     def __init__(self):
@@ -175,10 +317,58 @@ def api_summary():
         'performance': dashboard.get_performance_metrics(),
         'protection': dashboard.get_account_protection_status(),
         'positions': dashboard.get_position_details(),
+        'bot_running': BotManager.is_running(),
         'timestamp': datetime.now().isoformat()
     })
+
+# ========== 机器人控制API ==========
+
+@app.route('/api/bot/status')
+def api_bot_status():
+    """API: 获取机器人运行状态"""
+    return jsonify({
+        'running': BotManager.is_running(),
+        'pid': open(PID_FILE).read().strip() if os.path.exists(PID_FILE) else None
+    })
+
+@app.route('/api/bot/start', methods=['POST'])
+def api_bot_start():
+    """API: 启动机器人"""
+    result = BotManager.start()
+    return jsonify(result)
+
+@app.route('/api/bot/stop', methods=['POST'])
+def api_bot_stop():
+    """API: 停止机器人"""
+    result = BotManager.stop()
+    return jsonify(result)
+
+@app.route('/api/bot/restart', methods=['POST'])
+def api_bot_restart():
+    """API: 重启机器人"""
+    result = BotManager.restart()
+    return jsonify(result)
+
+# ========== 日志API ==========
+
+@app.route('/api/logs')
+def api_logs():
+    """API: 获取最近日志"""
+    lines = request.args.get('lines', 100, type=int)
+    logs = LogReader.get_recent_logs(lines)
+    return jsonify({'logs': logs})
+
+@app.route('/api/logs/search')
+def api_logs_search():
+    """API: 搜索日志"""
+    keyword = request.args.get('keyword', '')
+    lines = request.args.get('lines', 50, type=int)
+    logs = LogReader.search_logs(keyword, lines)
+    return jsonify({'logs': logs})
 
 if __name__ == '__main__':
     print("🚀 Web Dashboard v10.0 starting...")
     print("📊 Features: Performance metrics, Risk status, Position details")
+    print("🎮 Bot control: Start/Stop/Restart")
+    print("📜 Log viewer: Real-time logs")
     app.run(host='0.0.0.0', port=8080, debug=False)
