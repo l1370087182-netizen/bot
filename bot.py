@@ -447,10 +447,9 @@ class BinanceBot:
         计算动态杠杆倍数 - 基于保证金比率
         
         策略:
-        1. 目标名义价值 = min_notional (默认 10 USDT)
-        2. 优先使用余额的 50% 作为保证金
-        3. 如果 50% 保证金导致名义价值超过目标，则调整保证金
-        4. 杠杆范围: 3x-10x
+        1. 使用余额的 50% 作为保证金
+        2. 使用 10x 固定杠杆
+        3. 名义价值 = 保证金 × 杠杆
         
         Returns:
             dict: {'leverage': int, 'margin': float, 'notional': float}
@@ -464,37 +463,20 @@ class BinanceBot:
             notional = margin * leverage
             return {'leverage': leverage, 'margin': margin, 'notional': notional}
         
-        max_lev = DYNAMIC_LEVERAGE['max_leverage']
-        min_lev = DYNAMIC_LEVERAGE['min_leverage']
+        # 使用余额的 50% 作为保证金
         target_margin_ratio = DYNAMIC_LEVERAGE['target_margin_ratio']
+        margin = balance * target_margin_ratio
         
-        # 目标名义价值
-        target_notional = min_notional
+        # 固定使用 10x 杠杆
+        leverage = 10
         
-        # 尝试使用余额的 50% 作为保证金
-        target_margin = balance * target_margin_ratio
-        
-        # 计算在目标保证金下，各杠杆倍数的名义价值
-        for leverage in range(max_lev, min_lev - 1, -1):  # 从高杠杆到低杠杆
-            notional = target_margin * leverage
-            if notional >= target_notional:
-                # 找到能满足目标名义价值的最小杠杆
-                # 但实际使用目标名义价值，不是计算出的名义价值
-                actual_margin = target_notional / leverage
-                return {
-                    'leverage': leverage,
-                    'margin': actual_margin,
-                    'notional': target_notional
-                }
-        
-        # 如果即使最大杠杆也无法达到目标名义价值，使用最大杠杆
-        leverage = max_lev
-        margin = target_notional / leverage
+        # 计算名义价值
+        notional = margin * leverage
         
         return {
             'leverage': leverage,
             'margin': margin,
-            'notional': target_notional
+            'notional': notional
         }
 
     def _scan_for_entries(self, open_positions, max_positions, balance):
