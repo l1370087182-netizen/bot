@@ -100,24 +100,18 @@ class Strategy:
                             logging.info(f"🚨 BUY SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} (趋势延续)")
                             return signals
                 
-                # 做空条件 - 放宽条件以适应当前市场
+                # 做空条件
                 if adx_ok and last['close'] < last['ema200']:
-                    # 超买区死叉（标准做空）- 放宽到StochRSI > 65
-                    if last['stoch_k'] > 65 and last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']:
+                    # 超买区死叉（标准做空）- StochRSI > 70
+                    if last['stoch_k'] > 70 and last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']:
                         signals[symbol] = 'sell'
                         logging.info(f"🚨 SELL SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} | StochRSI: {last['stoch_k']:.1f} (超买死叉)")
                         return signals
-                    # 趋势延续：反弹到EMA附近后回落 - 放宽条件
+                    # 趋势延续：反弹到EMA附近后回落
                     elif last['close'] < last['ema200'] * 1.03 and last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']:
                         # 价格在EMA下方3%以内，且StochRSI死叉
                         signals[symbol] = 'sell'
                         logging.info(f"🚨 SELL SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} (趋势延续)")
-                        return signals
-                    # 新增：高位回落做空（适合当前下跌市场）
-                    elif last['stoch_k'] > 75 and last['stoch_k'] < prev['stoch_k']:
-                        # StochRSI在高位且开始下降
-                        signals[symbol] = 'sell'
-                        logging.info(f"🚨 SELL SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} | StochRSI: {last['stoch_k']:.1f} (高位回落)")
                         return signals
                         
             except Exception as e:

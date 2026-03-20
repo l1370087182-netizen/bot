@@ -1,0 +1,116 @@
+Werkzeug appears to be used in a production deployment. Consider switching to a production web server instead.
+ * Serving Flask app 'web_server'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.27.2.245:8080
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [19/Mar/2026 21:24:41] "GET /api/positions HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:25:24] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:25:24] "GET /socket.io/?EIO=4&transport=polling&t=Pq6HREI HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:25:24] "[33mGET /api/config HTTP/1.1[0m" 404 -
+127.0.0.1 - - [19/Mar/2026 21:25:24] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:25:24] "POST /socket.io/?EIO=4&transport=polling&t=Pq6HREx&sid=G5ywrRamgqr6DVeXAAAA HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:25:24] "GET /socket.io/?EIO=4&transport=polling&t=Pq6HREy&sid=G5ywrRamgqr6DVeXAAAA HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:25:24] "GET /socket.io/?EIO=4&transport=polling&t=Pq6HRFL&sid=G5ywrRamgqr6DVeXAAAA HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:25:27] "POST /api/bot/start HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:25:34] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:25:44] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:25:55] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:26:05] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:26:15] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:26:25] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:26:35] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:26:44] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:26:54] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:27:04] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:27:14] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:27:24] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:27:34] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:27:44] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:27:54] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:28:04] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:28:14] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:28:25] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:28:35] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:28:45] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:28:55] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:29:05] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:29:14] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:29:24] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:29:35] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:29:45] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:29:55] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:30:05] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:30:15] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:30:25] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:30:39] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:30:44] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:30:54] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:31:05] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:31:15] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:31:25] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:31:35] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:31:45] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:31:55] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:32:53] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:33:06] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:33:14] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:33:24] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:33:35] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:33:36] "GET /socket.io/?EIO=4&transport=websocket&sid=G5ywrRamgqr6DVeXAAAA HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:41:07] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:41:07] "GET /socket.io/?EIO=4&transport=polling&t=Pq6L1S- HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:41:07] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:41:07] "[33mGET /api/config HTTP/1.1[0m" 404 -
+127.0.0.1 - - [19/Mar/2026 21:41:07] "POST /socket.io/?EIO=4&transport=polling&t=Pq6L1Tr&sid=2ahH4EW5s2lGe_olAAAC HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:41:07] "GET /socket.io/?EIO=4&transport=polling&t=Pq6L1Ts&sid=2ahH4EW5s2lGe_olAAAC HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:41:09] "POST /api/bot/start HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:41:17] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:41:28] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:41:38] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:41:48] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:41:58] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:42:08] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:42:18] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:42:53] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 21:43:53] "GET /api/logs HTTP/1.1" 200 -
+Werkzeug appears to be used in a production deployment. Consider switching to a production web server instead.
+ * Serving Flask app 'web_server'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://172.27.2.245:8080
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [19/Mar/2026 23:04:13] "GET /socket.io/?EIO=4&transport=polling&t=Pq6e2hx HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:04:13] "GET /api/config HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:04:13] "POST /socket.io/?EIO=4&transport=polling&t=Pq6e2ms&sid=2Chv4ahKe_UdXEbfAAAA HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:04:13] "GET /socket.io/?EIO=4&transport=polling&t=Pq6e2ms.0&sid=2Chv4ahKe_UdXEbfAAAA HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:04:13] "GET /socket.io/?EIO=4&transport=polling&t=Pq6e2rh&sid=2Chv4ahKe_UdXEbfAAAA HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:04:53] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:05:45] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:05:46] "GET /socket.io/?EIO=4&transport=websocket&sid=2Chv4ahKe_UdXEbfAAAA HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:05:46] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:05:46] "GET /socket.io/?EIO=4&transport=polling&t=Pq6ePYJ HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:05:47] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:05:47] "GET /api/config HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:05:47] "POST /socket.io/?EIO=4&transport=polling&t=Pq6ePYV&sid=OIVySG38TgrbAuceAAAC HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:05:47] "GET /socket.io/?EIO=4&transport=polling&t=Pq6ePYW&sid=OIVySG38TgrbAuceAAAC HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:05:47] "GET /socket.io/?EIO=4&transport=polling&t=Pq6ePdQ&sid=OIVySG38TgrbAuceAAAC HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:05:57] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:06:07] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:06:17] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:06:27] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:06:37] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:06:47] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:06:57] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:07:07] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:07:17] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:07:27] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:07:53] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:08:53] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:09:53] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:10:53] "GET /api/logs HTTP/1.1" 200 -
+127.0.0.1 - - [19/Mar/2026 23:11:53] "GET /api/logs HTTP/1.1" 200 -
