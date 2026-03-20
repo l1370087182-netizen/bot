@@ -86,7 +86,18 @@ class Strategy:
                 # 优化日志：只有在 ADX 达标或 StochRSI 处于极端区域时记录，减少刷屏
                 is_interesting = adx_ok or last['stoch_k'] < 30 or last['stoch_k'] > 70
                 if is_interesting:
-                    logging.info(f"📊 {symbol} | 价格:{last['close']:.2f} ADX:{last['adx']:.1f} Stoch:{last['stoch_k']:.1f} EMA200:{last['ema200']:.2f}")
+                    logging.info(f"📊 {symbol} | 价格:{last['close']:.2f} ADX:{last['adx']:.1f} Stoch:{last['stoch_k']:.1f}/{last['stoch_d']:.1f} EMA200:{last['ema200']:.2f}")
+                    
+                # 调试：记录接近信号的币种
+                if adx_ok:
+                    if last['close'] > last['ema200'] and last['stoch_k'] < 35:
+                        # 接近做多信号
+                        if not (last['stoch_k'] > last['stoch_d'] and prev['stoch_k'] <= prev['stoch_d']):
+                            logging.debug(f"🔍 {symbol} 接近做多: Stoch {last['stoch_k']:.1f}/{last['stoch_d']:.1f}, 前Stoch {prev['stoch_k']:.1f}/{prev['stoch_d']:.1f}")
+                    elif last['close'] < last['ema200'] and last['stoch_k'] > 70:
+                        # 接近做空信号
+                        if not (last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']):
+                            logging.debug(f"🔍 {symbol} 接近做空: Stoch {last['stoch_k']:.1f}/{last['stoch_d']:.1f}, 前Stoch {prev['stoch_k']:.1f}/{prev['stoch_d']:.1f}")
                 
                 # 做多条件
                 if adx_ok and last['close'] > last['ema200']:
