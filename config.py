@@ -136,7 +136,6 @@ SYMBOLS = [
     'SC/USDT:USDT',       # Siacoin
     'DCR/USDT:USDT',      # Decred
     'XEM/USDT:USDT',      # NEM
-    'QTUM/USDT:USDT',     # Qtum
     'ICX/USDT:USDT',      # ICON
     'WAVES/USDT:USDT',    # Waves
     'OMG/USDT:USDT',      # OMG Network
@@ -149,7 +148,7 @@ SYMBOLS = [
 ]
 TIMEFRAME = '30m'
 LEVERAGE = 10  # 最大杠杆倍数
-POSITION_SIZE_PCT = 0.5  # 使用 50% 余额作为保证金
+POSITION_SIZE_PCT = 0.2  # 使用 20% 余额作为保证金 (降低回撤风险)
 MIN_ORDER_VALUE_USDT = 10.0  # 最小名义价值 10 USDT (降低门槛)
 
 # 动态杠杆配置 - 基于保证金比率
@@ -157,7 +156,7 @@ DYNAMIC_LEVERAGE = {
     'enabled': True,  # 启用动态杠杆
     'max_leverage': 10,  # 最大杠杆
     'min_leverage': 3,   # 最小杠杆
-    'target_margin_ratio': 0.5,  # 目标保证金占用比例 (50%)
+    'target_margin_ratio': 0.2,  # 目标保证金占用比例 (20%)
     'min_margin_amount': 5.0,    # 最小保证金金额 (USDT)
 }
 
