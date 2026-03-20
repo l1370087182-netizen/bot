@@ -79,8 +79,9 @@ class Strategy:
                 last = df.iloc[-1]
                 prev = df.iloc[-2]
                 
-                # 入场条件：ADX > 15（趋势存在）+ 价格与EMA关系 + StochRSI信号
-                adx_ok = last['adx'] > 15
+                # 入场条件：ADX > 12（趋势存在，放宽条件）+ 价格与EMA关系 + StochRSI信号
+                adx_ok = last['adx'] > 12
+                adx_strong = last['adx'] > 30  # 强趋势
                 
                 # 优化日志：只有在 ADX 达标或 StochRSI 处于极端区域时记录，减少刷屏
                 is_interesting = adx_ok or last['stoch_k'] < 30 or last['stoch_k'] > 70
@@ -93,6 +94,11 @@ class Strategy:
                     if last['stoch_k'] < 35 and last['stoch_k'] > last['stoch_d'] and prev['stoch_k'] <= prev['stoch_d']:
                         signals[symbol] = 'buy'
                         logging.info(f"🚨 BUY SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} | StochRSI: {last['stoch_k']:.1f} (超卖金叉)")
+                        return signals
+                    # 强趋势下的放宽条件：StochRSI 从高位回落到 50 附近即可入场
+                    elif adx_strong and last['stoch_k'] > 45 and last['stoch_k'] < 65 and last['stoch_k'] > last['stoch_d'] and prev['stoch_k'] <= prev['stoch_d']:
+                        signals[symbol] = 'buy'
+                        logging.info(f"🚨 BUY SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} | StochRSI: {last['stoch_k']:.1f} (强趋势放宽)")
                         return signals
                     # 趋势延续：回调到EMA附近后反弹
                     elif last['close'] > last['ema200'] * 0.98 and last['stoch_k'] > last['stoch_d']:
@@ -108,6 +114,11 @@ class Strategy:
                     if last['stoch_k'] > 70 and last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']:
                         signals[symbol] = 'sell'
                         logging.info(f"🚨 SELL SIGNAL: {symbol} (超买死叉)")
+                        return signals
+                    # 强趋势下的放宽条件：StochRSI 从低位反弹到 50 附近即可入场做空
+                    elif adx_strong and last['stoch_k'] > 35 and last['stoch_k'] < 55 and last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']:
+                        signals[symbol] = 'sell'
+                        logging.info(f"🚨 SELL SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} | StochRSI: {last['stoch_k']:.1f} (强趋势放宽)")
                         return signals
                     # 趋势延续死叉 (StochRSI > 50)
                     elif last['stoch_k'] > 50 and last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']:

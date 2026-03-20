@@ -150,7 +150,7 @@ SYMBOLS = [
 TIMEFRAME = '30m'
 LEVERAGE = 10  # 最大杠杆倍数
 POSITION_SIZE_PCT = 0.5  # 使用 50% 余额作为保证金
-MIN_ORDER_VALUE_USDT = 20.0  # 最小名义价值 20 USDT
+MIN_ORDER_VALUE_USDT = 10.0  # 最小名义价值 10 USDT (降低门槛)
 
 # 动态杠杆配置 - 基于保证金比率
 DYNAMIC_LEVERAGE = {
