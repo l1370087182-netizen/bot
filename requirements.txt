@@ -1,0 +1,31 @@
+# Binance Bot v10.0 依赖
+
+# 核心依赖
+ccxt>=4.2.0
+pandas>=2.0.0
+numpy>=1.24.0
+pyyaml>=6.0
+requests>=2.31.0
+
+# 技术指标
+ta-lib>=0.4.28
+
+# 异步支持
+aiohttp>=3.9.0
+asyncio>=3.4.3
+
+# 数据库
+sqlite3-python
+
+# Web服务
+flask>=3.0.0
+plotly>=5.18.0
+
+# 工具
+python-dotenv>=1.0.0
+schedule>=1.2.0
+
+# 开发依赖（可选）
+pytest>=7.4.0
+black>=23.0.0
+flake8>=6.0.0

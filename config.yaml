@@ -1,0 +1,234 @@
+# Binance Bot v10.0 配置文件
+# 支持热重载: 修改后无需重启程序
+
+# ==================== 交易基础配置 ====================
+trading:
+  # 交易模式
+  dry_run: false           # true=模拟交易, false=实盘
+  use_testnet: false       # true=使用测试网
+  
+  # 交易对列表
+  symbols:
+    - BTC/USDT:USDT
+    - ETH/USDT:USDT
+    - BNB/USDT:USDT
+    - SOL/USDT:USDT
+    - XRP/USDT:USDT
+    - DOGE/USDT:USDT
+    - ADA/USDT:USDT
+    - AVAX/USDT:USDT
+    - DOT/USDT:USDT
+    - LINK/USDT:USDT
+    - LTC/USDT:USDT
+    - BCH/USDT:USDT
+    - UNI/USDT:USDT
+    - ATOM/USDT:USDT
+    - ETC/USDT:USDT
+    - XLM/USDT:USDT
+    - NEAR/USDT:USDT
+    - ALGO/USDT:USDT
+    - VET/USDT:USDT
+    - FIL/USDT:USDT
+    - ICP/USDT:USDT
+    - TRX/USDT:USDT
+    - APT/USDT:USDT
+    - ARB/USDT:USDT
+    - OP/USDT:USDT
+    - SAND/USDT:USDT
+    - MANA/USDT:USDT
+    - AXS/USDT:USDT
+    - AAVE/USDT:USDT
+    - CRV/USDT:USDT
+    - SNX/USDT:USDT
+    - MKR/USDT:USDT
+    - COMP/USDT:USDT
+    - YFI/USDT:USDT
+    - 1INCH/USDT:USDT
+    - GRT/USDT:USDT
+    - ENJ/USDT:USDT
+    - CHZ/USDT:USDT
+    - BAT/USDT:USDT
+    - ZEC/USDT:USDT
+    - XMR/USDT:USDT
+    - DASH/USDT:USDT
+    - NEO/USDT:USDT
+    - ONT/USDT:USDT
+    - ZIL/USDT:USDT
+    - ZRX/USDT:USDT
+    - KNC/USDT:USDT
+    - LRC/USDT:USDT
+
+  # 扫描间隔
+  scan_interval: 60        # 秒
+  timeframe: 30m           # K线周期
+
+# ==================== 风控配置 ====================
+risk_management:
+  # 第一层: 单笔风险控制 (Position Sizer)
+  position_sizer:
+    risk_per_trade: 0.02   # 单笔风险2%
+    max_margin_per_trade: 0.20  # 单笔最大保证金20%
+    
+  # 第二层: 金字塔加仓 (Pyramiding)
+  pyramiding:
+    enabled: true
+    max_additions: 3
+    levels:
+      - pnl_pct: 2.0       # 盈利2%
+        size_pct: 0.40     # 加40%
+      - pnl_pct: 5.0       # 盈利5%
+        size_pct: 0.30     # 再加30%
+      - pnl_pct: 8.0       # 盈利8%
+        size_pct: 0.20     # 再加20%
+    
+  # 第三层: 分级止盈 (Exit Manager)
+  exit_manager:
+    stages:
+      - pnl_pct: 2.0       # 盈利2%
+        exit_pct: 0.20     # 平20%
+        atr_mult: 2.0
+      - pnl_pct: 6.0       # 盈利6%
+        exit_pct: 0.30     # 再平30%
+        atr_mult: 1.5
+      - pnl_pct: 10.0      # 盈利10%
+        exit_pct: 0.0      # 不平，进入追踪
+        atr_mult: 0.8      # 0.8x ATR贴身
+    
+  # 第四层: 账户硬保护 (Account Guardian)
+  account_guardian:
+    daily_loss_limit: 0.05      # 日亏损5%停24h
+    drawdown_limit_1: 0.07      # 回撤7%保命模式
+    drawdown_limit_2: 0.10      # 回撤10%永久锁死
+    
+  # 币种分组限制
+  coin_groups:
+    MEME:
+      max_positions: 1
+      correlation: HIGH
+    PLATFORM:
+      max_positions: 2
+      correlation: MEDIUM
+    DEFI:
+      max_positions: 1
+      correlation: HIGH
+    LAYER1:
+      max_positions: 2
+      correlation: MEDIUM
+
+# ==================== 策略配置 ====================
+strategy:
+  # 信号质量评分
+  signal_scorer:
+    enabled: true
+    min_score: 70            # 最低70分才交易
+    weights:
+      adx: 0.30
+      trend_consistency: 0.25
+      breakout_quality: 0.25
+      funding_rate: 0.20
+    
+  # 技术指标参数
+  indicators:
+    ema_period: 200
+    adx_period: 14
+    adx_threshold: 10
+    atr_period: 14
+    
+    # StochRSI
+    stochrsi:
+      rsi_period: 14
+      stoch_period: 14
+      k_period: 3
+      d_period: 3
+      oversold: 45
+      overbought: 55
+    
+    # 布林带
+    bollinger:
+      period: 20
+      std_dev: 2
+    
+  # 动态杠杆
+  dynamic_leverage:
+    enabled: true
+    base_leverage: 10
+    volatility_adjustment:
+      - threshold: 0.005     # <0.5%
+        leverage: 10
+      - threshold: 0.010     # 0.5-1%
+        leverage: 7
+      - threshold: 0.020     # 1-2%
+        leverage: 5
+      - threshold: 0.030     # 2-3%
+        leverage: 3
+      - threshold: 999       # >3%
+        leverage: 2
+    
+  # 资金费率过滤
+  funding_rate_filter:
+    enabled: true
+    long_max: 0.0005         # 多头最大资金费率
+    short_max: -0.0005       # 空头最大资金费率(负数)
+
+# ==================== 通知配置 ====================
+notifications:
+  # Bark iPhone推送
+  bark:
+    enabled: true
+    key: "YOUR_BARK_KEY"
+    
+  # Telegram Bot
+  telegram:
+    enabled: false
+    bot_token: "YOUR_BOT_TOKEN"
+    chat_id: "YOUR_CHAT_ID"
+    
+  # 通知场景
+  events:
+    - open_position
+    - close_position
+    - stop_loss_triggered
+    - daily_loss_limit
+    - critical_drawdown
+
+# ==================== 监控配置 ====================
+monitoring:
+  # Web面板
+  web_dashboard:
+    enabled: true
+    port: 8080
+    host: "0.0.0.0"
+    
+  # 性能追踪
+  performance:
+    enabled: true
+    data_file: "trades.db"   # SQLite数据库
+    
+  # 日志
+  logging:
+    level: INFO
+    file: "bot.log"
+    max_size: 10MB
+    backup_count: 5
+
+# ==================== 高级配置 ====================
+advanced:
+  # API设置
+  api:
+    recv_window: 10000
+    rate_limit: true
+    max_retries: 3
+    retry_delay: 1.0         # 秒
+    
+  # 缓存设置
+  cache:
+    macro_trends_ttl: 600    # 10分钟
+    
+  # 冷却期
+  cooldown:
+    loss_cooldown: 3600      # 亏损后冷却1小时
+    
+  # 自动校准
+  auto_calibration:
+    enabled: false           # 实验性功能
+    interval_days: 30

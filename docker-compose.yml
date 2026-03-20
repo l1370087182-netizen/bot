@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: binance_bot
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - BOT_HOME=/app
+      - PYTHONUNBUFFERED=1
+    networks:
+      - bot_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  web:
+    build: .
+    container_name: binance_web
+    restart: unless-stopped
+    command: python web_server.py
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - bot_network
+    depends_on:
+      - bot
+
+  redis:
+    image: redis:7-alpine
+    container_name: binance_redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - bot_network
+
+networks:
+  bot_network:
+    driver: bridge
+
+volumes:
+  redis_data:
