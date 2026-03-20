@@ -269,30 +269,24 @@ class BinanceBot:
             # 获取最大盈利百分比（用于移动止盈）
             max_profit_pct = self.position_tracking[symbol]['max_profit']
             
-            # 1. 策略级智能平仓判断（ATR移动止损 + 走势与情绪）
+            # 策略级平仓判断（ATR移动止损 + 趋势反转 + 紧急止损 + 放量异常）
             exit_reason = self.strategy.calculate_exit_signals(
                 self.exchange, symbol, details['side'], details['entry_price'], 
                 max_profit_pct, self.position_tracking[symbol]
             )
             
             if exit_reason:
-                logging.info(f"🧠 SMART EXIT: {symbol} triggered by {exit_reason}")
-                self.close_position(symbol, f"Smart Strategy: {exit_reason}")
-                continue
-
-            # 2. 紧急硬止损 (10%) - 最后防线，仅在极端情况下触发
-            if pnl_pct <= -10.0:
-                logging.critical(f"🚨 EMERGENCY STOP: {symbol} PnL {pnl_pct:.2f}% exceeded hard limit")
-                self.close_position(symbol, f"Emergency Stop: {pnl_pct:.2f}%")
+                logging.info(f"🧠 EXIT: {symbol} | 原因: {exit_reason} | 盈亏: {pnl_pct:+.2f}%")
+                self.close_position(symbol, exit_reason)
                 continue
             
             # 输出监控日志（包含ATR止损线信息）
             atr_stop = self.position_tracking[symbol].get('atr_stop_price', 'N/A')
             if atr_stop != 'N/A':
-                atr_stop_str = f"ATR止损:{atr_stop:.2f}"
+                atr_stop_str = f"ATR:{atr_stop:.2f}"
             else:
-                atr_stop_str = "ATR止损:计算中"
-            logging.info(f"📊 {symbol} 监控中 | 盈亏:{pnl_pct:+.2f}% | 最高:{max_profit_pct:+.2f}% | {atr_stop_str} | 周期:{self.position_tracking[symbol]['cycles']}")
+                atr_stop_str = "ATR:计算中"
+            logging.info(f"📊 {symbol} | 盈亏:{pnl_pct:+.2f}% | 最高:{max_profit_pct:+.2f}% | {atr_stop_str} | 周期:{self.position_tracking[symbol]['cycles']}")
 
     def check_trend_reversal(self, symbol, current_side):
         """检查趋势是否反转"""

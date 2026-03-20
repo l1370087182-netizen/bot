@@ -123,18 +123,23 @@ class Strategy:
 
     def calculate_exit_signals(self, exchange, symbol, current_side, entry_price, max_profit_pct=0, position_tracking=None):
         """
-        智能平仓判断 - 支持 ATR 动态移动止损
+        智能平仓判断 - 3+1 精简策略
+        
+        核心逻辑：
+        1. ATR 动态移动止损 (主要机制)
+        2. 趋势反转 (EMA200 突破)
+        3. 紧急硬止损 (最后防线)
+        4. 放量异常 (情绪指标)
         
         Args:
-            max_profit_pct: 持仓期间达到的最大盈利百分比（用于移动止盈）
-            position_tracking: 持仓追踪数据，包含 'highest_price', 'lowest_price', 'atr_stop_price'
+            max_profit_pct: 持仓期间达到的最大盈利百分比
+            position_tracking: 持仓追踪数据
         """
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df = self.calculate_indicators(df)
         
         last = df.iloc[-1]
-        prev = df.iloc[-2]
         current_price = last['close']
         
         # 计算当前盈亏百分比
@@ -143,25 +148,22 @@ class Strategy:
         else:  # SHORT
             current_pnl_pct = ((entry_price - current_price) / entry_price) * 100
         
-        # ========== 1. ATR 动态移动止损 (ATR Trailing Stop) ==========
-        # 这是主要的止损机制，替代固定百分比止损
+        # ========== 1. ATR 动态移动止损 (核心机制) ==========
         atr_data = self.calculate_atr_trailing_stop(df, current_side, atr_multiplier=2.0)
         
         # 更新持仓追踪中的最高/最低价和ATR止损线
         if position_tracking is not None:
-            # 更新最高/最低价
             if current_side == 'LONG':
                 if position_tracking.get('highest_price', 0) == 0:
                     position_tracking['highest_price'] = current_price
                 else:
                     position_tracking['highest_price'] = max(position_tracking['highest_price'], current_price)
                 
-                # ATR止损线只上升不下降（保护利润）
                 new_stop = atr_data['stop_price']
                 if 'atr_stop_price' not in position_tracking:
                     position_tracking['atr_stop_price'] = new_stop
                 else:
-                    # 止损线只能上升（做多时）
+                    # 止损线只上升不下降
                     position_tracking['atr_stop_price'] = max(position_tracking['atr_stop_price'], new_stop)
                     
             else:  # SHORT
@@ -170,15 +172,13 @@ class Strategy:
                 else:
                     position_tracking['lowest_price'] = min(position_tracking['lowest_price'], current_price)
                 
-                # ATR止损线只下降不上升（做空时）
                 new_stop = atr_data['stop_price']
                 if 'atr_stop_price' not in position_tracking:
                     position_tracking['atr_stop_price'] = new_stop
                 else:
-                    # 止损线只能下降（做空时）
+                    # 止损线只下降不上升
                     position_tracking['atr_stop_price'] = min(position_tracking['atr_stop_price'], new_stop)
             
-            # 使用追踪的ATR止损线
             atr_stop_price = position_tracking['atr_stop_price']
         else:
             atr_stop_price = atr_data['stop_price']
@@ -191,52 +191,22 @@ class Strategy:
             if current_price >= atr_stop_price:
                 return f"atr_trailing_stop: price={current_price:.2f} stop={atr_stop_price:.2f}"
         
-        # ========== 2. 紧急止损（硬止损）- 作为最后防线 ==========
-        # 亏损超过10%立即止损（只在极端情况下使用）
-        if current_pnl_pct < -10.0:
-            return f"emergency_stop_loss:{current_pnl_pct:.2f}%"
-        
-        # ========== 3. 趋势反转信号（只在有盈利且盈利较大时考虑）==========
-        # 只有在盈利 > 5% 时才考虑趋势反转，避免被洗盘出局
+        # ========== 2. 趋势反转 (盈利>5%时生效) ==========
         if current_pnl_pct > 5.0:
-            if current_side == 'LONG':
-                # 价格跌破EMA200（趋势反转）
-                if last['close'] < last['ema200'] * 0.99:  # 允许1%的误差
-                    return "trend_broken_down"
-                
-                # StochRSI超买区死叉（动量衰竭）
-                if last['stoch_k'] > 85 and last['stoch_k'] < last['stoch_d']:
-                    return "momentum_exhaustion_long"
-                    
-            elif current_side == 'SHORT':
-                # 价格突破EMA200（趋势反转）
-                if last['close'] > last['ema200'] * 1.01:  # 允许1%的误差
-                    return "trend_broken_up"
-                
-                # StochRSI超卖区金叉（动量衰竭）
-                if last['stoch_k'] < 15 and last['stoch_k'] > last['stoch_d']:
-                    return "momentum_exhaustion_short"
+            if current_side == 'LONG' and last['close'] < last['ema200'] * 0.99:
+                return "trend_broken_down"
+            elif current_side == 'SHORT' and last['close'] > last['ema200'] * 1.01:
+                return "trend_broken_up"
 
-        # ========== 4. 异常波动/情绪 (Volume Spike) ==========
+        # ========== 3. 紧急硬止损 (最后防线) ==========
+        if current_pnl_pct < -10.0:
+            return f"emergency_stop:{current_pnl_pct:.2f}%"
+        
+        # ========== 4. 放量异常 (情绪指标) ==========
         if last['volume'] > last['vol_ma'] * 3:
             price_move = abs(last['close'] - last['open'])
-            if price_move < (last['atr'] * 0.5):  # 巨量小实体，意味着分歧巨大
-                return "volume_exhaustion_sentiment"
-        
-        # ========== 5. 大幅回调预警 ==========
-        # 如果短时间内出现大幅回调（1小时内回调超过3%）且盈利超过3%
-        if len(df) >= 12 and current_pnl_pct > 3.0:  # 1小时 = 12个5分钟K线
-            recent_high = df['high'].tail(12).max()
-            recent_low = df['low'].tail(12).min()
-            
-            if current_side == 'LONG':
-                drop_from_high = ((recent_high - last['close']) / recent_high) * 100
-                if drop_from_high > 3.0:  # 1小时内从高点回调超过3%
-                    return f"sharp_pullback_long:{drop_from_high:.2f}%"
-            else:  # SHORT
-                rise_from_low = ((last['close'] - recent_low) / recent_low) * 100
-                if rise_from_low > 3.0:  # 1小时内从低点反弹超过3%
-                    return f"sharp_pullback_short:{rise_from_low:.2f}%"
+            if price_move < (last['atr'] * 0.5):
+                return "volume_exhaustion"
 
         return None
     
