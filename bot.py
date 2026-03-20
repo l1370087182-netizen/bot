@@ -61,25 +61,41 @@ class BinanceBot:
         self.strategy = Strategy(SYMBOLS)
         self.risk = RiskManager(MAX_DAILY_LOSS_PCT, STOP_LOSS_PCT, TAKE_PROFIT_PCT)
         
-        logging.info(f"✅ Bot v7.1 Initialized (Dry Run: {self.dry_run})")
+        logging.info(f"✅ Bot v9.0 Initialized (Dry Run: {self.dry_run})")
+        logging.info("⚠️ 免责声明: 本系统为实验性量化策略，无回测验证，请谨慎使用")
 
     def get_balance(self):
-        try:
-            balance_data = self.exchange.fetch_balance({'type': 'future'})
-            balance = float(balance_data['total'].get('USDT', 0))
-            # 仅在初始化或扫描时显示余额，减少日志刷屏
-            return balance
-        except Exception as e:
-            logging.error(f"❌ Balance Error: {e}")
-            raise e
-
+        """获取余额，带重试机制"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                balance_data = self.exchange.fetch_balance({'type': 'future'})
+                balance = float(balance_data['total'].get('USDT', 0))
+                self.consecutive_errors = 0  # 重置错误计数
+                return balance
+            except Exception as e:
+                self.consecutive_errors += 1
+                logging.error(f"❌ Balance Error (attempt {attempt+1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # 指数退避
+                else:
+                    raise e
+    
     def get_open_positions(self):
-        try:
-            positions = self.exchange.fetch_positions()
-            return [p['symbol'] for p in positions if float(p.get('contracts', 0) or 0) != 0]
-        except Exception as e:
-            logging.error(f"❌ Fetch Positions Error: {e}")
-            return []
+        """获取持仓，带重试机制"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                positions = self.exchange.fetch_positions()
+                self.consecutive_errors = 0
+                return [p['symbol'] for p in positions if float(p.get('contracts', 0) or 0) != 0]
+            except Exception as e:
+                self.consecutive_errors += 1
+                logging.error(f"❌ Fetch Positions Error (attempt {attempt+1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                else:
+                    return []
 
     def get_position_details(self, symbol):
         try:
@@ -100,16 +116,40 @@ class BinanceBot:
                     mark_price = float(p.get('markPrice') or entry_price)
                     liquidation_price = float(p.get('liquidationPrice') or 0.0)
                     
+                    # 计算强平风险
+                    liquidation_risk = self._calculate_liquidation_risk(
+                        pos_side, entry_price, liquidation_price, leverage
+                    )
+                    
                     return {
                         'side': pos_side, 'size': abs(contracts), 'entry_price': entry_price,
                         'unrealized_pnl': unrealized_pnl, 'leverage': leverage,
                         'mark_price': mark_price, 'pnl_pct': pnl_pct,
-                        'liquidation_price': liquidation_price
+                        'liquidation_price': liquidation_price,
+                        'liquidation_risk': liquidation_risk
                     }
             return None
         except Exception as e:
             logging.error(f"❌ Position Details Error: {e}")
             return None
+    
+    def _calculate_liquidation_risk(self, side, entry_price, liq_price, leverage):
+        """计算强平风险等级"""
+        if not liq_price or liq_price == 0:
+            return 'UNKNOWN'
+        
+        if side == 'LONG':
+            distance_pct = (entry_price - liq_price) / entry_price * 100
+        else:
+            distance_pct = (liq_price - entry_price) / entry_price * 100
+        
+        # 风险等级
+        if distance_pct < 10:
+            return 'HIGH'  # 高风险
+        elif distance_pct < 20:
+            return 'MEDIUM'  # 中等风险
+        else:
+            return 'LOW'  # 低风险
 
     def _load_position_tracking(self):
         """加载持仓追踪数据（持久化 max_profit）"""
@@ -203,17 +243,62 @@ class BinanceBot:
                 json.dump(status, f)
         except: pass
 
-    def calculate_dynamic_leverage(self, balance, current_price, symbol_atr):
-        # 核心：20% 保证金基准 + 波动率调节
-        base_ratio = 0.2
-        if symbol_atr and current_price:
-            adj = 0.015 / max(symbol_atr / current_price, 0.005)
-            ratio = base_ratio * max(0.6, min(adj, 1.1))
-        else:
-            ratio = base_ratio
+    def calculate_dynamic_leverage(self, balance, current_price, symbol_atr, funding_rate=0):
+        """
+        动态杠杆计算 - 基于波动率和资金费率
         
-        margin = balance * ratio
-        return {'leverage': 10, 'margin': margin, 'notional': margin * 10}
+        考虑因素:
+        1. ATR波动率 - 波动越大杠杆越低
+        2. 资金费率 - 正费率(多头付)降低多头杠杆
+        3. 账户余额 - 余额越少杠杆越低(保护小账户)
+        """
+        # 基础杠杆
+        base_leverage = 10
+        
+        # 1. 波动率调节
+        if symbol_atr and current_price:
+            volatility_ratio = symbol_atr / current_price
+            # 波动率 < 0.5%: 10x, 0.5-1%: 7x, 1-2%: 5x, 2-3%: 3x, >3%: 2x
+            if volatility_ratio < 0.005:
+                vol_adjusted = 10
+            elif volatility_ratio < 0.01:
+                vol_adjusted = 7
+            elif volatility_ratio < 0.02:
+                vol_adjusted = 5
+            elif volatility_ratio < 0.03:
+                vol_adjusted = 3
+            else:
+                vol_adjusted = 2
+        else:
+            vol_adjusted = 5
+        
+        # 2. 资金费率调节 (如果资金费率高，降低杠杆)
+        funding_adjusted = vol_adjusted
+        if funding_rate > 0.0001:  # 0.01%资金费率
+            funding_adjusted = max(3, vol_adjusted - 2)
+        elif funding_rate > 0.0005:  # 0.05%资金费率
+            funding_adjusted = max(2, vol_adjusted - 3)
+        
+        # 3. 余额保护 (小账户降低杠杆)
+        if balance < 50:
+            balance_adjusted = max(3, funding_adjusted - 3)
+        elif balance < 100:
+            balance_adjusted = max(5, funding_adjusted - 2)
+        else:
+            balance_adjusted = funding_adjusted
+        
+        final_leverage = min(base_leverage, balance_adjusted)
+        
+        # 计算保证金和名义价值
+        margin = balance * 0.2  # 20%保证金
+        notional = margin * final_leverage
+        
+        return {
+            'leverage': final_leverage,
+            'margin': margin,
+            'notional': notional,
+            'volatility_ratio': volatility_ratio if symbol_atr and current_price else 0
+        }
 
     def _scan_for_entries(self, balance):
         signals = self.strategy.calculate_signals(self.exchange)
@@ -257,7 +342,8 @@ class BinanceBot:
                 self.close_position(s, exit_reason)
 
     def run(self):
-        logging.info("🚀 v7.0 Multi-Factor Quant Engine Running...")
+        logging.info("🚀 v9.0 Dynamic Dual Filter System Running...")
+        logging.info("📊 策略: 纯技术指标规则系统 | 无机器学习成分")
         last_scan = 0
         while True:
             try:
