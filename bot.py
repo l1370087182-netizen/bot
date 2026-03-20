@@ -442,14 +442,15 @@ class BinanceBot:
                 
                 time.sleep(10)
 
-    def calculate_dynamic_leverage(self, balance, current_price, min_notional=20.0):
+    def calculate_dynamic_leverage(self, balance, current_price, min_notional=10.0):
         """
         计算动态杠杆倍数 - 基于保证金比率
         
         策略:
-        1. 目标使用余额的 50% 作为保证金
-        2. 根据当前价格计算所需杠杆，使名义价值 >= min_notional
-        3. 杠杆范围: 3x - 10x
+        1. 目标名义价值 = min_notional (默认 10 USDT)
+        2. 优先使用余额的 50% 作为保证金
+        3. 如果 50% 保证金导致名义价值超过目标，则调整保证金
+        4. 杠杆范围: 3x-10x
         
         Returns:
             dict: {'leverage': int, 'margin': float, 'notional': float}
@@ -466,32 +467,34 @@ class BinanceBot:
         max_lev = DYNAMIC_LEVERAGE['max_leverage']
         min_lev = DYNAMIC_LEVERAGE['min_leverage']
         target_margin_ratio = DYNAMIC_LEVERAGE['target_margin_ratio']
-        min_margin = DYNAMIC_LEVERAGE['min_margin_amount']
         
-        # 目标保证金金额 (余额的 50%)
+        # 目标名义价值
+        target_notional = min_notional
+        
+        # 尝试使用余额的 50% 作为保证金
         target_margin = balance * target_margin_ratio
         
-        # 确保不低于最小保证金
-        margin = max(target_margin, min_margin)
+        # 计算在目标保证金下，各杠杆倍数的名义价值
+        for leverage in range(max_lev, min_lev - 1, -1):  # 从高杠杆到低杠杆
+            notional = target_margin * leverage
+            if notional >= target_notional:
+                # 找到能满足目标名义价值的最小杠杆
+                # 但实际使用目标名义价值，不是计算出的名义价值
+                actual_margin = target_notional / leverage
+                return {
+                    'leverage': leverage,
+                    'margin': actual_margin,
+                    'notional': target_notional
+                }
         
-        # 计算达到最小名义价值所需的杠杆
-        required_leverage = min_notional / margin if margin > 0 else max_lev
-        
-        # 限制杠杆范围
-        leverage = int(max(min_lev, min(max_lev, required_leverage)))
-        
-        # 重新计算名义价值
-        notional = margin * leverage
-        
-        # 如果名义价值仍不足，调整保证金
-        if notional < min_notional:
-            margin = min_notional / leverage
-            notional = margin * leverage
+        # 如果即使最大杠杆也无法达到目标名义价值，使用最大杠杆
+        leverage = max_lev
+        margin = target_notional / leverage
         
         return {
             'leverage': leverage,
             'margin': margin,
-            'notional': notional
+            'notional': target_notional
         }
 
     def _scan_for_entries(self, open_positions, max_positions, balance):
