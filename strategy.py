@@ -205,6 +205,72 @@ class Strategy:
         if pnl < -15.0: return f"hard_stop:{pnl:.2f}%" # 硬止损
         return None
 
+    def calculate_signal_for_symbol(self, exchange, symbol, df):
+        """计算单个币种的信号 (供v10.0使用)"""
+        try:
+            df = self.calculate_indicators(df)
+            
+            curr = df.iloc[-1]
+            last_closed = df.iloc[-2]
+            prev_closed = df.iloc[-3]
+            
+            # 检查数据质量
+            if len(df) < 200:
+                return None
+            
+            # 获取宏观趋势
+            trends = self.get_macro_trends(exchange, symbol)
+            
+            # 波动率检查
+            vol_ok = self.check_volatility_filter(df)
+            if not vol_ok:
+                return None
+            
+            # 布林带挤压
+            not_squeezing = not last_closed['squeeze']
+            
+            signal_data = {
+                'symbol': symbol,
+                'adx': curr['adx'],
+                'trend_1h': trends['1h'],
+                'trend_4h': trends['4h'],
+                'bb_squeeze': last_closed['squeeze'],
+                'volume_surge': curr['volume'] > curr['vol_ma'] * 1.5,
+                'funding_rate': 0,  # 需要外部获取
+                'atr': curr['atr'],
+                'ema200': last_closed['ema200'],
+                'close': last_closed['close'],
+                'stoch_k': last_closed['stoch_k'],
+                'stoch_d': last_closed['stoch_d'],
+                'mfi': last_closed['mfi']
+            }
+            
+            # 多头信号
+            if trends['1h'] == 'UP' and curr['adx'] > 10 and not_squeezing:
+                if last_closed['close'] > last_closed['ema200']:
+                    if last_closed['stoch_k'] < 45 and last_closed['stoch_k'] > last_closed['stoch_d']:
+                        if last_closed['mfi'] > 40:
+                            signal_data['side'] = 'buy'
+                            signal_data['strength'] = 'FULL' if trends['4h'] == 'UP' else 'HALF'
+                            return signal_data
+            
+            # 空头信号
+            if trends['1h'] == 'DOWN' and curr['adx'] > 10 and not_squeezing:
+                if last_closed['close'] < last_closed['ema200']:
+                    is_rebounding = curr['rsi'] > last_closed['rsi'] and curr['rsi'] > 30
+                    if not is_rebounding:
+                        if last_closed['stoch_k'] > 55 and last_closed['stoch_k'] < last_closed['stoch_d']:
+                            if last_closed['mfi'] < 60:
+                                signal_data['side'] = 'sell'
+                                signal_data['strength'] = 'FULL' if trends['4h'] == 'DOWN' else 'HALF'
+                                return signal_data
+            
+            return None
+            
+        except Exception as e:
+            logging.error(f"Signal calculation error for {symbol}: {e}")
+            return None
+
     def calculate_atr_trailing_stop(self, df, current_side, atr_multiplier=2.0):
         last = df.iloc[-1]
         atr = last['atr']
