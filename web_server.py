@@ -62,6 +62,20 @@ def is_bot_running():
     return False
 
 def get_bot_uptime():
+    # 优先从 .bot_status 文件读取时间戳
+    status_file = os.path.join(BOT_DIR, '.bot_status')
+    try:
+        if os.path.exists(status_file):
+            with open(status_file, 'r') as f:
+                status = json.load(f)
+                timestamp = status.get('timestamp')
+                if timestamp:
+                    start_time = datetime.fromtimestamp(timestamp)
+                    uptime = datetime.now() - start_time
+                    return f"{uptime.days}天 {uptime.seconds//3600}时 {(uptime.seconds%3600)//60}分"
+    except: pass
+    
+    # 备选：从日志文件解析
     if not os.path.exists(BOT_LOG_FILE): return "-"
     try:
         with open(BOT_LOG_FILE, 'rb') as f:
@@ -69,7 +83,8 @@ def get_bot_uptime():
             size = f.tell()
             f.seek(max(0, size - 50000))
             chunk = f.read().decode('utf-8', errors='ignore')
-            starts = list(re.finditer(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*Bot started', chunk))
+            # 匹配 "Bot initialized" 或 "Bot started"
+            starts = list(re.finditer(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*(?:Bot initialized|Bot started)', chunk))
             if starts:
                 start_time = datetime.strptime(starts[-1].group(1), '%Y-%m-%d %H:%M:%S')
                 uptime = datetime.now() - start_time
@@ -78,6 +93,18 @@ def get_bot_uptime():
     return "未知"
 
 def get_balance():
+    # 优先从 .bot_status 文件读取
+    status_file = os.path.join(BOT_DIR, '.bot_status')
+    try:
+        if os.path.exists(status_file):
+            with open(status_file, 'r') as f:
+                status = json.load(f)
+                balance = status.get('balance', 0)
+                if balance:
+                    return f"{float(balance):.2f}"
+    except: pass
+    
+    # 备选：从日志文件读取
     if not os.path.exists(BOT_LOG_FILE): return "0.00"
     try:
         with open(BOT_LOG_FILE, 'rb') as f:
@@ -93,6 +120,18 @@ def get_balance():
     return "0.00"
 
 def get_positions():
+    # 优先从 .bot_status 文件读取
+    status_file = os.path.join(BOT_DIR, '.bot_status')
+    try:
+        if os.path.exists(status_file):
+            with open(status_file, 'r') as f:
+                status = json.load(f)
+                positions = status.get('positions', [])
+                if positions:
+                    return positions
+    except: pass
+    
+    # 备选：从日志文件解析
     positions = []
     if not os.path.exists(BOT_LOG_FILE): return positions
     try:

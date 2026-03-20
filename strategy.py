@@ -79,11 +79,13 @@ class Strategy:
                 last = df.iloc[-1]
                 prev = df.iloc[-2]
                 
-                # 记录每个币种的诊断信息
-                logging.info(f"📊 {symbol} | 价格:{last['close']:.2f} ADX:{last['adx']:.1f} Stoch:{last['stoch_k']:.1f} EMA200:{last['ema200']:.2f}")
-                
                 # 入场条件：ADX > 15（趋势存在）+ 价格与EMA关系 + StochRSI信号
                 adx_ok = last['adx'] > 15
+                
+                # 优化日志：只有在 ADX 达标或 StochRSI 处于极端区域时记录，减少刷屏
+                is_interesting = adx_ok or last['stoch_k'] < 30 or last['stoch_k'] > 70
+                if is_interesting:
+                    logging.info(f"📊 {symbol} | 价格:{last['close']:.2f} ADX:{last['adx']:.1f} Stoch:{last['stoch_k']:.1f} EMA200:{last['ema200']:.2f}")
                 
                 # 做多条件
                 if adx_ok and last['close'] > last['ema200']:
@@ -105,8 +107,15 @@ class Strategy:
                     # 超买区死叉（标准做空）- StochRSI > 70
                     if last['stoch_k'] > 70 and last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']:
                         signals[symbol] = 'sell'
-                        logging.info(f"🚨 SELL SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} | StochRSI: {last['stoch_k']:.1f} (超买死叉)")
+                        logging.info(f"🚨 SELL SIGNAL: {symbol} (超买死叉)")
                         return signals
+                    # 趋势延续死叉 (StochRSI > 50)
+                    elif last['stoch_k'] > 50 and last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']:
+                        # 确保价格在EMA下方一段距离，确认弱势
+                        if last['close'] < last['ema200'] * 0.99:
+                            signals[symbol] = 'sell'
+                            logging.info(f"🚨 SELL SIGNAL: {symbol} (趋势延续死叉)")
+                            return signals
                     # 趋势延续：反弹到EMA附近后回落
                     elif last['close'] < last['ema200'] * 1.03 and last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']:
                         # 价格在EMA下方3%以内，且StochRSI死叉
