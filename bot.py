@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Binance Bot - 智能交易监控系统 v7.0 (机构级因子版)
+Binance Bot - 智能交易监控系统 v10.0 (机构级因子版)
 更新：MTF宏观过滤、ATR加权调仓、MFI资金流验证
 """
 import ccxt
@@ -32,6 +32,26 @@ ccxt.Exchange.milliseconds = patched_milliseconds
 
 from config import *
 from strategy import Strategy
+from performance_tracker import PerformanceTracker
+
+# ========== v10.0 新架构模块 ==========
+import sys
+sys.path.insert(0, 'src')
+
+try:
+    from risk.position_sizer import PositionSizer
+    from risk.pyramiding import PyramidingManager
+    from risk.exit_manager import ExitManager
+    from risk.account_guardian import AccountGuardian
+    from risk.coin_grouper import CoinGrouper
+    from strategies.signal_scorer import SignalQualityScorer
+    from utils.database import DatabaseManager
+    V10_AVAILABLE = True
+except ImportError as e:
+    V10_AVAILABLE = False
+    print(f"v10.0 modules not available: {e}")
+# ========== v10.0 模块结束 ==========
+
 from risk_manager import RiskManager
 
 # Logging setup
@@ -60,6 +80,26 @@ class BinanceBot:
         
         self.strategy = Strategy(SYMBOLS)
         self.risk = RiskManager(MAX_DAILY_LOSS_PCT, STOP_LOSS_PCT, TAKE_PROFIT_PCT)
+        # ========== v10.0 新架构初始化 ==========
+        if V10_AVAILABLE:
+            self.position_sizer = PositionSizer(risk_per_trade=0.02)
+            self.pyramiding = PyramidingManager()
+            self.exit_manager = ExitManager()
+            self.guardian = AccountGuardian(
+                daily_loss_limit=0.05,
+                drawdown_limit_1=0.07,
+                drawdown_limit_2=0.10
+            )
+            self.coin_grouper = CoinGrouper()
+            self.signal_scorer = SignalQualityScorer()
+            self.db = DatabaseManager('trades.db')
+            self.v10_mode = True
+            logging.info("🚀 v10.0 Mode: Three-layer protection + Amplifier")
+        else:
+            self.v10_mode = False
+            self.position_sizer = None
+        # ========== v10.0 初始化结束 ==========
+
         
         logging.info(f"✅ Bot v9.0 Initialized (Dry Run: {self.dry_run})")
         logging.info("⚠️ 免责声明: 本系统为实验性量化策略，无回测验证，请谨慎使用")
