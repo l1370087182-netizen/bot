@@ -69,28 +69,13 @@ class BinanceBot:
             'enableRateLimit': True,
         })
         
-        # 设置杠杆
-        self._set_leverage()
-        
         # 初始化策略和风控
         self.strategy = Strategy(SYMBOLS)
         self.risk = RiskManager(MAX_DAILY_LOSS_PCT, STOP_LOSS_PCT, TAKE_PROFIT_PCT)
         
-        logging.info(f"✅ Bot initialized (Dry Run: {self.dry_run}, Leverage: {LEVERAGE}x)")
+        logging.info(f"✅ Bot initialized (Dry Run: {self.dry_run})")
+        logging.info(f"🧠 Dynamic Leverage: Enabled (3x-10x based on margin ratio)")
         logging.info(f"🧠 Intelligence Level: AI Sentiment & Trend Detection Enabled")
-
-    def _set_leverage(self):
-        """为所有交易对设置杠杆"""
-        major_symbols = ['ETH/USDT:USDT', 'BNB/USDT:USDT', 'SOL/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT']
-        for symbol in major_symbols:
-            try:
-                if not self.dry_run:
-                    self.exchange.set_leverage(LEVERAGE, symbol)
-                    logging.info(f"✅ Leverage set to {LEVERAGE}x for {symbol}")
-                else:
-                    logging.info(f"[DRY RUN] Would set leverage to {LEVERAGE}x for {symbol}")
-            except Exception as e:
-                logging.warning(f"⚠️ Could not set leverage for {symbol}: {e}")
 
     def get_balance(self):
         """获取账户余额"""
@@ -337,17 +322,20 @@ class BinanceBot:
             logging.error(f"❌ Error checking trend: {e}")
             return False
 
-    def execute_trade(self, symbol, side, amount):
-        """执行开仓 - 强化多空一致性与杠杆控制"""
+    def execute_trade(self, symbol, side, amount, leverage=None):
+        """执行开仓 - 支持动态杠杆"""
         try:
-            # 1. 强制设置杠杆 (10x)
+            # 使用传入的杠杆或默认杠杆
+            from config import LEVERAGE as DEFAULT_LEVERAGE
+            use_leverage = leverage if leverage else DEFAULT_LEVERAGE
+            
+            # 1. 设置杠杆
             if not self.dry_run:
                 try:
-                    from config import LEVERAGE
-                    self.exchange.set_leverage(LEVERAGE, symbol)
-                    logging.info(f"⚙️ Force-set Leverage to {LEVERAGE}x for {symbol}")
-                except:
-                    pass
+                    self.exchange.set_leverage(use_leverage, symbol)
+                    logging.info(f"⚙️ Set Leverage to {use_leverage}x for {symbol}")
+                except Exception as e:
+                    logging.warning(f"⚠️ Could not set leverage for {symbol}: {e}")
 
             ticker = self.exchange.fetch_ticker(symbol)
             price = ticker['ask'] if side == 'buy' else ticker['bid']
@@ -362,10 +350,10 @@ class BinanceBot:
                 amount = float(self.exchange.amount_to_precision(symbol, amount))
                 notional = amount * price
 
-            logging.info(f"🎯 ENTRY ORDER: {side.upper()} {amount} {symbol} @ ~{price} (Value: {notional:.2f} USDT)")
+            logging.info(f"🎯 ENTRY ORDER: {side.upper()} {amount} {symbol} @ ~{price:.4f} (Value: {notional:.2f} USDT, {use_leverage}x)")
 
             if self.dry_run:
-                logging.info(f"[DRY RUN] Would {side} {symbol} at {price}")
+                logging.info(f"[DRY RUN] Would {side} {symbol} at {price} with {use_leverage}x leverage")
                 return {"id": "dry_run_id"}
 
             # 确定方向
@@ -387,10 +375,11 @@ class BinanceBot:
                 'side': pos_side,
                 'highest_price': price if pos_side == 'LONG' else 0,
                 'lowest_price': price if pos_side == 'SHORT' else float('inf'),
-                'atr_stop_price': None  # 将在第一个监控周期计算
+                'atr_stop_price': None,  # 将在第一个监控周期计算
+                'leverage': use_leverage  # 记录使用的杠杆
             }
             
-            self._notify(f"✅ 开仓成功: {symbol}", f"方向: {pos_side}\n数量: {amount}\n价格: {price}", "success")
+            self._notify(f"✅ 开仓成功: {symbol}", f"方向: {pos_side}\n数量: {amount}\n价格: {price}\n杠杆: {use_leverage}x", "success")
             
             return order
         except Exception as e:
@@ -459,8 +448,60 @@ class BinanceBot:
                 
                 time.sleep(10)
 
+    def calculate_dynamic_leverage(self, balance, current_price, min_notional=20.0):
+        """
+        计算动态杠杆倍数 - 基于保证金比率
+        
+        策略:
+        1. 目标使用余额的 50% 作为保证金
+        2. 根据当前价格计算所需杠杆，使名义价值 >= min_notional
+        3. 杠杆范围: 3x - 10x
+        
+        Returns:
+            dict: {'leverage': int, 'margin': float, 'notional': float}
+        """
+        from config import DYNAMIC_LEVERAGE
+        
+        if not DYNAMIC_LEVERAGE['enabled']:
+            # 使用固定杠杆
+            margin = balance * POSITION_SIZE_PCT
+            leverage = LEVERAGE
+            notional = margin * leverage
+            return {'leverage': leverage, 'margin': margin, 'notional': notional}
+        
+        max_lev = DYNAMIC_LEVERAGE['max_leverage']
+        min_lev = DYNAMIC_LEVERAGE['min_leverage']
+        target_margin_ratio = DYNAMIC_LEVERAGE['target_margin_ratio']
+        min_margin = DYNAMIC_LEVERAGE['min_margin_amount']
+        
+        # 目标保证金金额 (余额的 50%)
+        target_margin = balance * target_margin_ratio
+        
+        # 确保不低于最小保证金
+        margin = max(target_margin, min_margin)
+        
+        # 计算达到最小名义价值所需的杠杆
+        required_leverage = min_notional / margin if margin > 0 else max_lev
+        
+        # 限制杠杆范围
+        leverage = int(max(min_lev, min(max_lev, required_leverage)))
+        
+        # 重新计算名义价值
+        notional = margin * leverage
+        
+        # 如果名义价值仍不足，调整保证金
+        if notional < min_notional:
+            margin = min_notional / leverage
+            notional = margin * leverage
+        
+        return {
+            'leverage': leverage,
+            'margin': margin,
+            'notional': notional
+        }
+
     def _scan_for_entries(self, open_positions, max_positions, balance):
-        """扫描入场信号 - 使用账户余额50%开仓，单币种仓位限制"""
+        """扫描入场信号 - 使用动态杠杆和保证金比率"""
         signals = self.strategy.calculate_signals(self.exchange)
         
         if signals:
@@ -490,22 +531,25 @@ class BinanceBot:
                 ticker = self.exchange.fetch_ticker(symbol)
                 price = ticker['last']
                 
-                # 计算仓位：使用余额的50%（用户要求）
-                # position_value 是计划投入的保证金
-                margin_to_use = balance * 0.5
+                # ========== 动态杠杆计算 ==========
+                position_config = self.calculate_dynamic_leverage(balance, price, MIN_ORDER_VALUE_USDT)
+                leverage = position_config['leverage']
+                margin = position_config['margin']
+                notional = position_config['notional']
                 
-                # 计算名义价值（带杠杆）
-                planned_notional = margin_to_use * LEVERAGE
-                
-                # 检查是否满足交易所最小名义价值（通常 5-20 USDT，此处设为 15 为界）
-                if planned_notional < 15:
-                    logging.warning(f"⚠️ Account too small: {balance:.2f} USDT, 50% with {LEVERAGE}x leverage is only {planned_notional:.2f} USDT (min 15)")
+                # 检查是否满足最小名义价值
+                if notional < MIN_ORDER_VALUE_USDT:
+                    logging.warning(f"⚠️ Account too small: {balance:.2f} USDT, cannot meet min notional {MIN_ORDER_VALUE_USDT} USDT")
                     continue
                 
-                # 确保使用50%资产开仓
-                logging.info(f"💰 Using 50% of balance: {balance:.2f} USDT -> Margin: {margin_to_use:.2f} USDT -> Planned Notional: {planned_notional:.2f} USDT")
+                # 检查保证金是否足够
+                if margin > balance * 0.95:  # 留 5% 缓冲
+                    logging.warning(f"⚠️ Insufficient margin: need {margin:.2f} USDT, have {balance:.2f} USDT")
+                    continue
                 
-                amount = planned_notional / price
+                logging.info(f"💰 Dynamic Leverage: {leverage}x | Margin: {margin:.2f} USDT | Notional: {notional:.2f} USDT (Balance: {balance:.2f} USDT)")
+                
+                amount = notional / price
                 
                 # 检查最小数量限制
                 min_amount = self.exchange.markets[symbol]['limits']['amount']['min']
@@ -513,12 +557,14 @@ class BinanceBot:
                     amount = min_amount
                 
                 amount = float(self.exchange.amount_to_precision(symbol, amount))
-                actual_value = amount * price
+                actual_notional = amount * price
                 
                 # 判断多空方向
                 direction = "做多" if side == 'buy' else "做空"
-                logging.info(f"🎯 Entry: {symbol} {direction} | Amount: {amount} | Value: ~{actual_value:.2f} USDT (50% of {balance:.2f})")
-                self.execute_trade(symbol, side, amount)
+                logging.info(f"🎯 Entry: {symbol} {direction} {amount} @ ~{price:.4f} | Value: ~{actual_notional:.2f} USDT ({leverage}x leverage)")
+                
+                # 执行交易（传入动态杠杆）
+                self.execute_trade(symbol, side, amount, leverage)
                 
                 # 开仓后刷新仓位列表
                 open_positions = self.get_open_positions()

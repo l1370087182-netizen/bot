@@ -147,9 +147,18 @@ SYMBOLS = [
     'USDC/USDT:USDT',     # USD Coin (作为交易对，不是稳定币存储)
 ]
 TIMEFRAME = '30m'
-LEVERAGE = 10  # 开启 10 倍杠杆
-POSITION_SIZE_PCT = 0.9
-MIN_ORDER_VALUE_USDT = 1.0
+LEVERAGE = 10  # 最大杠杆倍数
+POSITION_SIZE_PCT = 0.5  # 使用 50% 余额作为保证金
+MIN_ORDER_VALUE_USDT = 20.0  # 最小名义价值 20 USDT
+
+# 动态杠杆配置 - 基于保证金比率
+DYNAMIC_LEVERAGE = {
+    'enabled': True,  # 启用动态杠杆
+    'max_leverage': 10,  # 最大杠杆
+    'min_leverage': 3,   # 最小杠杆
+    'target_margin_ratio': 0.5,  # 目标保证金占用比例 (50%)
+    'min_margin_amount': 5.0,    # 最小保证金金额 (USDT)
+}
 
 # Risk Management
 MAX_DAILY_LOSS_PCT = 0.10  # 10% daily drawdown limit
