@@ -142,25 +142,28 @@ class Strategy:
                 # 记录所有币种指标（全面监控）
                 logging.info(f"📊 {symbol} | 1H:{trends['1h']} | Vol:{'OK' if vol_ok else 'LOW'} | ADX:{curr_k['adx']:.1f} | Stoch:{last_closed['stoch_k']:.1f}")
 
-                # --- 多头判定 ---
-                if trends['1h'] == 'UP' and vol_ok and curr_k['adx'] > 10 and not_squeezing:
+                # --- 放宽后的多头判定 (v10.1 增加开单率) ---
+                # 放宽条件: ADX从10降至8, StochRSI从45/55放宽至50/50, 移除MFI限制
+                if trends['1h'] == 'UP' and vol_ok and curr_k['adx'] > 8 and not_squeezing:
                     if last_closed['close'] > last_closed['ema200']:
-                        if last_closed['stoch_k'] < 45 and last_closed['stoch_k'] > last_closed['stoch_d'] and prev_closed['stoch_k'] <= prev_closed['stoch_d']:
-                            if last_closed['mfi'] > 40:
-                                strength = 'FULL' if trends['4h'] == 'UP' else 'HALF'
-                                signals[symbol] = {'side': 'buy', 'strength': strength}
-                                logging.info(f"🚨 v9.0 BUY: {symbol} | Strength:{strength} | 1H:UP 4H:{trends['4h']}")
+                        # 放宽StochRSI条件: <50即可，金叉条件保持
+                        if last_closed['stoch_k'] < 50 and last_closed['stoch_k'] > last_closed['stoch_d'] and prev_closed['stoch_k'] <= prev_closed['stoch_d']:
+                            # 移除MFI限制，增加开单机会
+                            strength = 'FULL' if trends['4h'] == 'UP' else 'HALF'
+                            signals[symbol] = {'side': 'buy', 'strength': strength}
+                            logging.info(f"🚨 v10.1 BUY: {symbol} | Strength:{strength} | 1H:UP 4H:{trends['4h']}")
 
-                # --- 空头判定 ---
-                if trends['1h'] == 'DOWN' and vol_ok and curr_k['adx'] > 10 and not_squeezing:
+                # --- 放宽后的空头判定 (v10.1 增加开单率) ---
+                # 放宽条件: ADX从10降至8, StochRSI从55放宽至50, 移除MFI和反弹检测限制
+                if trends['1h'] == 'DOWN' and vol_ok and curr_k['adx'] > 8 and not_squeezing:
                     if last_closed['close'] < last_closed['ema200']:
-                        is_rebounding = curr_k['rsi'] > last_closed['rsi'] and curr_k['rsi'] > 30 and any(df['rsi'].tail(5) < 30)
-                        if not is_rebounding:
-                            if last_closed['stoch_k'] > 55 and last_closed['stoch_k'] < last_closed['stoch_d'] and prev_closed['stoch_k'] >= prev_closed['stoch_d']:
-                                if last_closed['mfi'] < 60:
-                                    strength = 'FULL' if trends['4h'] == 'DOWN' else 'HALF'
-                                    signals[symbol] = {'side': 'sell', 'strength': strength}
-                                    logging.info(f"🚨 v9.0 SELL: {symbol} | Strength:{strength} | 1H:DOWN 4H:{trends['4h']}")
+                        # 移除is_rebounding检测，放宽条件
+                        # 放宽StochRSI条件: >50即可，死叉条件保持
+                        if last_closed['stoch_k'] > 50 and last_closed['stoch_k'] < last_closed['stoch_d'] and prev_closed['stoch_k'] >= prev_closed['stoch_d']:
+                            # 移除MFI限制
+                            strength = 'FULL' if trends['4h'] == 'DOWN' else 'HALF'
+                            signals[symbol] = {'side': 'sell', 'strength': strength}
+                            logging.info(f"🚨 v10.1 SELL: {symbol} | Strength:{strength} | 1H:DOWN 4H:{trends['4h']}")
                         
             except Exception as e:
                 logging.error(f"❌ Signal calculation error for {symbol}: {str(e)}")

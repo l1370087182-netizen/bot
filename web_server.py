@@ -287,7 +287,7 @@ dashboard = WebDashboard()
 
 @app.route('/')
 def index():
-    return send_file('web_dashboard_v10.html')
+    return send_file('web_dashboard.html')
 
 @app.route('/api/status')
 def api_status():
@@ -371,4 +371,6 @@ if __name__ == '__main__':
     print("📊 Features: Performance metrics, Risk status, Position details")
     print("🎮 Bot control: Start/Stop/Restart")
     print("📜 Log viewer: Real-time logs")
-    app.run(host='0.0.0.0', port=8080, debug=False)
+    port = int(os.environ.get('PORT', 8081))
+    print(f"🌐 Running on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=False)

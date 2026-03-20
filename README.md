@@ -1,290 +1,134 @@
-# Binance Futures Trading Bot v9.0
+# Binance Futures Trading Bot v10.1 (Institutional Grade)
 
-币安USDT永续合约量化交易机器人 - 动态双过滤器系统
+币安USDT永续合约量化交易机器人 - **三层防护 + 放大器** 架构 (机构级因子版)
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![CCXT](https://img.shields.io/badge/CCXT-Latest-green.svg)](https://github.com/ccxt/ccxt)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![SQLite](https://img.shields.io/badge/SQLite-Persistence-orange.svg)](https://sqlite.org/)
+[![Web](https://img.shields.io/badge/Web-Dashboard-blueviolet.svg)](http://localhost:8080)
 
-## 🚀 核心特性
+## 🚀 v10.1 核心架构：三层防护 + 放大器
 
-### 动态双过滤器系统 (Dynamic Dual Filter System)
+v10.1 引入了全新的模块化风控与盈利增强架构，将简单的技术指标升级为具备自我保护能力的系统化交易方案。
 
-#### 1. MTF 宏观趋势过滤器 (Multi-Timeframe Trend Filter)
-- **1H 周期**: 决定入场执行权
-- **4H 周期**: 决定仓位权重 (FULL/HALF)
-- **趋势一致性评分**: -2 到 +2，确保多周期共振
+### 1. 🛡️ 三层防护 (Account Guardian)
+- **第一层 (日亏损保护)**: 单日亏损达 **5%** 自动暂停交易 24 小时，防止情绪化操作或异常行情。
+- **第二层 (回撤保护 - 保命模式)**: 账户回撤达 **7%** 触发 **Survival Mode**：
+  - 最大杠杆降至 5x
+  - 仓位大小减半
+  - 禁止金字塔加仓
+- **第三层 (账户硬止损)**: 账户回撤达 **10%** 永久锁定机器人，需管理员手动复核解锁。
 
-#### 2. RVF 相对波动率过滤器 (Relative Volatility Filter)
-- **ATR 动态区间**: 0.6x - 3.5x 平均波动率
-- **排除死鱼盘**: 波动率过低不交易
-- **排除极端行情**: 波动率过高不交易
+### 2. ⚡ 放大器 (Pyramiding Manager)
+- **趋势增强**: 仅在盈利后加仓，不摊平亏损。
+- **三级加仓**:
+  - **Level 1**: 盈利 2% → 加仓原仓位的 40%
+  - **Level 2**: 盈利 5% → 加仓原仓位的 30%
+  - **Level 3**: 盈利 8% → 加仓原仓位的 20%
+- **风险控制**: 总仓位风险严格限制在账户余额的 4-6% 以内。
 
-## 📊 策略逻辑
+### 3. 🎯 信号评分系统 (Signal Quality Scorer)
+不再是简单的买入/卖出，每个信号都会经过 100 分制评估：
+- **ADX 强度 (30%)**: 趋势越强分越高。
+- **趋势一致性 (25%)**: 1H/4H/30M 多周期共振。
+- **突破质量 (25%)**: 布林带挤压突破 + 成交量激增。
+- **资金费率 (20%)**: 费率方向对冲评估。
+- **门槛**: **>=60分** 允许交易；**>=75分** 标记为 PREMIUM (1.5x 仓位)。
 
-### 入场条件 (多头)
+## 📊 策略逻辑 (v10.1 放宽版)
 
-```
-✅ 1H 趋势 = UP
-✅ 波动率合格 (0.6x < ATR < 3.5x)
-✅ ADX > 10 (趋势强度足够)
-✅ 非布林带挤压期
-✅ 价格 > EMA200
-✅ StochRSI 金叉且 K < 45 (低位金叉)
-✅ MFI > 40 (资金流确认)
-```
+### 入场条件 (多头/空头)
+- **趋势确认**: 1H EMA200 确认大趋势方向。
+- **强度过滤**: ADX > 8 (放宽以增加开单率)。
+- **动量确认**: StochRSI 金叉 (< 50) 或 死叉 (> 50)。
+- **波动率检查**: ATR 动态区间 (0.6x - 3.5x) 排除极端行情。
+- **挤压避让**: 避开布林带横盘挤压期。
 
-### 入场条件 (空头)
+### 智能出场 (Exit Manager)
+- **分级止盈**: 
+  - 盈利 3% → 平仓 20%
+  - 盈利 5% → 平仓 30%
+  - 剩余 50% 采用 **ATR 移动止损 (2.8x)** 追逐趋势。
+- **锁利机制**: 
+  - **保本锁**: 盈利 1.8% 后将止损移至开仓价 +0.5%。
+  - **5% 级锁利**: 盈利 5% 后锁定至少 3% 利润。
 
-```
-✅ 1H 趋势 = DOWN
-✅ 波动率合格
-✅ ADX > 10
-✅ 非挤压期
-✅ 价格 < EMA200
-✅ 非反弹状态 (RSI过滤)
-✅ StochRSI 死叉且 K > 55 (高位死叉)
-✅ MFI < 60
-```
+## 🛠️ 技术特性
 
-### 仓位管理
+### 1. 动态杠杆 (Dynamic Leverage)
+- **波动率自适应**: 根据 14 日 ATR 动态计算杠杆 (10x / 7x / 5x / 3x / 2x)。
+- **风险对冲**: 自动根据账户保证金占用比率调整下单规模。
 
-| 4H 趋势 | 1H 趋势 | 仓位强度 |
-|---------|---------|----------|
-| UP | UP | FULL (100%) |
-| UP | DOWN | HALF (50%) |
-| DOWN | UP | HALF (50%) |
-| DOWN | DOWN | FULL (100%) |
+### 2. 币种分组 (Coin Grouper)
+- **防相关性过度集中**: 
+  - MEME 组 (DOGE, SHIB): 最多 1 个仓位。
+  - DEFI/LAYER1 组: 最多 2-3 个仓位。
+- 防止单一板块崩盘导致全军覆没。
 
-### 智能平仓系统
+### 3. 数据持久化 (SQLite)
+- 放弃 JSON，迁移至 **SQLite (`trades.db`)**。
+- 完整记录：交易 ID、成交价、止盈止损、持仓时间、信号评分等。
+- 支持实时性能分析（胜率、盈亏比、夏普比率预览）。
 
-```
-基础止损: ATR 2.8x 移动止损
-盈利 1.8%: 保本锁 (0.5%)
-盈利 5%: 锁利线 (3%)
-硬止损: -15%
-```
+## 📈 Web Dashboard v10.0 Final
 
-## ⚡ 性能优化
+全新的监控与管理界面 (Port: 8080/8081)：
 
-### 扫描性能
+- **🎮 机器人控制**: 网页端一键 启动/停止/重启。
+- **📜 实时日志**: 颜色区分 (INFO/TRADE/ERROR) 的流式日志查看器。
+- **📊 性能看板**: 实时显示胜率、净利润、总交易笔数。
+- **🛡️ 风控状态**: 实时显示日亏损进度条及防护模式状态。
+- **📱 响应式设计**: 支持手机浏览器随时查看。
 
-| 指标 | 优化前 | 优化后 | 提升 |
-|------|--------|--------|------|
-| 扫描速度 | ~90秒 | ~26秒 | 71% |
-| 数据同步性 | 2.4分钟延迟 | 实时同步 | 100% |
-| 缓存机制 | 无 | 10分钟缓存 | 重复扫描9秒 |
-
-### 关键技术
-
-- **批量预加载**: 统一获取所有币种宏观趋势数据
-- **缓存机制**: 10分钟缓存，减少API调用
-- **耗时统计**: 每轮扫描显示耗时
-
-## 🛡️ 风控系统
-
-### 1. max_profit 持久化
-- 保存到 `.position_tracking` 文件
-- 机器人重启后恢复数据
-- 避免止损线重置
-
-### 2. 每日亏损限制
-- 日亏损达到 10% 自动暂停交易
-- 5分钟后自动恢复检查
-- 防止连续亏损
-
-### 3. 持仓上限
-- 最多同时持有 5 个仓位
-- 避免过度分散
-
-## 📁 项目结构
+## 📁 项目结构 (v10.1)
 
 ```
 binance_bot/
-├── bot.py                 # 主程序
-├── strategy.py            # 策略核心 (动态双过滤器)
-├── risk_manager.py        # 风控管理
-├── config.py              # 配置文件
-├── web_server.py          # Web面板服务
-├── web_dashboard.html     # 监控面板
-├── auto_monitor.sh        # 自动监控脚本
-├── crontab.txt            # 定时任务配置
-├── requirements.txt       # 依赖列表
-└── .env                   # 环境变量 (API密钥)
+├── src/                   # v10.0 核心模块
+│   ├── risk/              # 风控层 (Guardian, Sizer, Grouper, etc.)
+│   ├── strategies/        # 策略层 (Scorer, etc.)
+│   └── utils/             # 工具层 (Database, Notifier)
+├── bot.py                 # 主程序 (已整合 v10.1 架构)
+├── strategy.py            # 策略计算核心
+├── config.py              # 基础配置
+├── web_server.py          # Flask 后端服务
+├── web_dashboard.html     # 前端面板
+├── trades.db              # SQLite 数据库
+└── .env                   # API 密钥 (需自行配置)
 ```
 
 ## 🚀 快速开始
 
-### 1. 克隆仓库
+1. **环境准备**:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-```bash
-git clone https://github.com/l1370087182-netizen/bot.git
-cd bot
-```
+2. **配置密钥**:
+   编辑 `.env`：
+   ```
+   BINANCE_API_KEY=你的API密钥
+   BINANCE_API_SECRET=你的私钥
+   ```
 
-### 2. 安装依赖
+3. **运行**:
+   ```bash
+   # 启动交易机器人
+   python3 bot.py --real
+   
+   # 启动 Web 管理后台
+   python3 web_server.py
+   ```
 
-```bash
-pip install -r requirements.txt
-```
+4. **访问面板**:
+   `http://localhost:8081`
 
-### 3. 配置环境变量
+## 📝 评估与建议
 
-```bash
-cp .env.example .env
-# 编辑 .env 文件，填入您的币安API密钥
-```
-
-`.env` 文件内容：
-```
-BINANCE_API_KEY=your_api_key_here
-BINANCE_API_SECRET=your_api_secret_here
-```
-
-### 4. 启动机器人
-
-```bash
-# 测试模式 (模拟交易)
-python bot.py
-
-# 实盘模式
-python bot.py --real
-```
-
-### 5. 自动监控 (推荐)
-
-```bash
-# 添加定时任务
-crontab crontab.txt
-
-# 手动启动监控
-./auto_monitor.sh
-```
-
-## 📈 监控面板
-
-启动后访问 Web 面板查看实时状态：
-
-```
-http://localhost:8080
-```
-
-面板显示：
-- 账户余额和盈亏
-- 当前持仓详情
-- 最近交易记录
-- 系统日志
-
-## 🔧 配置说明
-
-### 交易参数 (config.py)
-
-```python
-# 交易币种列表 (48个主流币种)
-SYMBOLS = ['BTC/USDT:USDT', 'ETH/USDT:USDT', ...]
-
-# 扫描间隔
-LOOP_INTERVAL = 60  # 每60秒扫描一次
-
-# 风险控制
-MAX_DAILY_LOSS_PCT = 0.10  # 日亏损限制 10%
-STOP_LOSS_PCT = 0.02       # 止损 2%
-TAKE_PROFIT_PCT = 0.04     # 止盈 4%
-
-# 杠杆设置
-LEVERAGE = 10              # 最大10倍杠杆
-POSITION_SIZE_PCT = 0.2    # 20%保证金
-```
-
-### 过滤器参数 (strategy.py)
-
-```python
-# 趋势强度
-ADX_THRESHOLD = 10         # ADX > 10 才交易
-
-# 波动率区间
-ATR_MIN_MULTIPLIER = 0.6   # 最小0.6倍平均ATR
-ATR_MAX_MULTIPLIER = 3.5   # 最大3.5倍平均ATR
-
-# StochRSI参数
-STOCH_K_PERIOD = 3
-STOCH_D_PERIOD = 3
-RSI_PERIOD = 14
-
-# 缓存时间
-MACRO_CACHE_TTL = 600      # 10分钟缓存
-```
-
-## 📊 日志说明
-
-### 日志文件
-
-- `bot.log`: 主程序日志
-- `auto_monitor.log`: 监控脚本日志
-- `web_server.log`: Web服务日志
-
-### 关键日志标记
-
-```
-🔍 v9.0 动态双过滤器扫描启动 (48 coins)...
-⏳ 预加载宏观趋势数据...
-📊 BTC/USDT:USDT | 1H:DOWN | Vol:OK | ADX:11.8 | Stoch:10.5
-🏁 扫描完成。耗时: 26.3s | 发现信号: 0
-🚨 v9.0 BUY: ETH/USDT:USDT | Strength:FULL | 1H:UP 4H:UP
-💰 Account Balance: 12.73 USDT
-```
-
-## 🔔 通知设置
-
-### Bark iPhone 推送
-
-在 `bot.py` 中配置您的 Bark Key：
-
-```python
-bark_url = f"https://api.day.app/YOUR_BARK_KEY/{title}/{content}"
-```
-
-推送场景：
-- ✅ 开仓成功
-- 🚨 平仓成功
-- ⚠️ 系统错误
-
-## ⚠️ 风险提示
-
-1. **交易有风险，入市需谨慎**
-2. 本机器人仅供学习研究，不构成投资建议
-3. 请确保您了解量化交易的风险
-4. 建议使用测试网或小资金测试
-5. 请妥善保管 API 密钥，不要泄露
-
-## 📝 更新日志
-
-### v9.0 (2026-03-20)
-- ✅ 新增动态双过滤器系统
-- ✅ 扫描性能优化 (71%提升)
-- ✅ max_profit 持久化
-- ✅ 每日亏损限制
-- ✅ 全面错误处理
-
-### v3.0 (2026-03-19)
-- ATR 2.8x 移动止损
-- WebSocket 极速面板
-- Bark iPhone 推送
-- 多仓位并行扫描
-
-### v1.0 (2026-03-16)
-- 基础交易功能
-- EMA/RSI/MACD 策略
-- 风控管理
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 📄 许可证
-
-MIT License
+- **v10.1 优势**: 在震荡行情中通过放宽 StochRSI 条件增加开单率，同时利用三层防护确保小资金（如 10-100 USDT）的生存能力。
+- **策略评估**: 属于“宽进严出”型，依靠金字塔加仓在对的趋势中实现爆发性盈利。
+- **建议**: 保持 2% 的单笔风险配置，不要随意手动干预机器人的移动止损线。
 
 ---
 
-**免责声明**: 本软件仅供学习交流使用，作者不对使用本软件造成的任何损失负责。加密货币交易风险极高，请谨慎决策。
+**免责声明**: 本机器人仅供学习和技术交流使用。加密货币交易具有极高风险，作者不对任何因使用本软件造成的财务损失负责。

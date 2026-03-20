@@ -24,8 +24,8 @@ class SignalQualityScorer:
             'breakout_quality': 0.25,
             'funding_rate': 0.20
         }
-        self.min_score = 70  # 最低交易门槛
-        logging.info("📊 SignalQualityScorer initialized")
+        self.min_score = 60  # 降低门槛: 从70降至60 (v10.1)
+        logging.info("📊 SignalQualityScorer initialized (v10.1 - relaxed threshold)")
     
     def calculate_score(self, signal_data):
         """
@@ -106,14 +106,14 @@ class SignalQualityScorer:
         # 计算加权总分
         total_score = sum(scores[k] * self.weights[k] for k in scores)
         
-        # 确定交易等级
-        if total_score >= 80:
+        # 确定交易等级 (v10.1 放宽标准)
+        if total_score >= 75:  # 从80降至75
             trade_tier = 'PREMIUM'  # 优质信号，最大仓位
             max_position_pct = 0.06  # 6%账户
-        elif total_score >= 70:
+        elif total_score >= 60:  # 从70降至60
             trade_tier = 'STANDARD'  # 标准信号，正常仓位
             max_position_pct = 0.04  # 4%账户
-        elif total_score >= 60:
+        elif total_score >= 50:  # 从60降至50
             trade_tier = 'REDUCED'   # 降级信号，小仓位
             max_position_pct = 0.02  # 2%账户
         else:
@@ -125,7 +125,7 @@ class SignalQualityScorer:
             'component_scores': scores,
             'trade_tier': trade_tier,
             'max_position_pct': max_position_pct,
-            'can_trade': total_score >= self.min_score
+            'can_trade': total_score >= self.min_score  # 60分即可交易
         }
         
         logging.info(f"📊 Signal Score: {total_score:.1f} | Tier: {trade_tier} | "
