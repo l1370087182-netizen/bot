@@ -14,6 +14,7 @@ if not BINANCE_API_KEY or not BINANCE_API_SECRET:
 
 # Trading Parameters - All Binance USDT-Margined Futures (excluding BTC)
 SYMBOLS = [
+    'BTC/USDT:USDT',      # Bitcoin
     'ETH/USDT:USDT',      # Ethereum
     'BNB/USDT:USDT',      # Binance Coin
     'SOL/USDT:USDT',      # Solana

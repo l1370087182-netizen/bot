@@ -60,9 +60,9 @@ class Strategy:
         """计算入场信号 - 扫描所有交易对"""
         signals = {}
         
-        # 只扫描主要币种（前20个），排除已知的无效交易对
+        # 扫描前50个币种，增加交易机会
         invalid_symbols = {'MATIC/USDT:USDT', 'TUSD/USDT:USDT', 'USDC/USDT:USDT'}
-        scan_symbols = [s for s in self.symbols[:20] if s not in invalid_symbols]
+        scan_symbols = [s for s in self.symbols[:50] if s not in invalid_symbols]
         
         logging.info(f"🔍 Scanning {len(scan_symbols)} symbols: {scan_symbols[:5]}...")
         
