@@ -88,7 +88,7 @@ class Strategy:
                 # 做多条件
                 if adx_ok and last['close'] > last['ema200']:
                     # 超卖区金叉（标准做多）
-                    if last['stoch_k'] < 30 and last['stoch_k'] > last['stoch_d'] and prev['stoch_k'] <= prev['stoch_d']:
+                    if last['stoch_k'] < 35 and last['stoch_k'] > last['stoch_d'] and prev['stoch_k'] <= prev['stoch_d']:
                         signals[symbol] = 'buy'
                         logging.info(f"🚨 BUY SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} | StochRSI: {last['stoch_k']:.1f} (超卖金叉)")
                         return signals
@@ -100,20 +100,25 @@ class Strategy:
                             logging.info(f"🚨 BUY SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} (趋势延续)")
                             return signals
                 
-                # 做空条件
+                # 做空条件 - 放宽条件以适应当前市场
                 if adx_ok and last['close'] < last['ema200']:
-                    # 超买区死叉（标准做空）
-                    if last['stoch_k'] > 70 and last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']:
+                    # 超买区死叉（标准做空）- 放宽到StochRSI > 65
+                    if last['stoch_k'] > 65 and last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']:
                         signals[symbol] = 'sell'
                         logging.info(f"🚨 SELL SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} | StochRSI: {last['stoch_k']:.1f} (超买死叉)")
                         return signals
-                    # 趋势延续：反弹到EMA附近后回落
-                    elif last['close'] < last['ema200'] * 1.02 and last['stoch_k'] < last['stoch_d']:
-                        # 价格在EMA下方2%以内，且StochRSI死叉
-                        if prev['close'] > prev['ema200'] * 0.98:
-                            signals[symbol] = 'sell'
-                            logging.info(f"🚨 SELL SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} (趋势延续)")
-                            return signals
+                    # 趋势延续：反弹到EMA附近后回落 - 放宽条件
+                    elif last['close'] < last['ema200'] * 1.03 and last['stoch_k'] < last['stoch_d'] and prev['stoch_k'] >= prev['stoch_d']:
+                        # 价格在EMA下方3%以内，且StochRSI死叉
+                        signals[symbol] = 'sell'
+                        logging.info(f"🚨 SELL SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} (趋势延续)")
+                        return signals
+                    # 新增：高位回落做空（适合当前下跌市场）
+                    elif last['stoch_k'] > 75 and last['stoch_k'] < prev['stoch_k']:
+                        # StochRSI在高位且开始下降
+                        signals[symbol] = 'sell'
+                        logging.info(f"🚨 SELL SIGNAL: {symbol} | 价格: {last['close']:.2f} | ADX: {last['adx']:.1f} | StochRSI: {last['stoch_k']:.1f} (高位回落)")
+                        return signals
                         
             except Exception as e:
                 logging.warning(f"⚠️ Error scanning {symbol}: {str(e)[:50]}")
@@ -122,12 +127,13 @@ class Strategy:
         logging.info(f"📭 No signals found after scanning {len(scan_symbols)} symbols")
         return None
 
-    def calculate_exit_signals(self, exchange, symbol, current_side, entry_price, max_profit_pct=0):
+    def calculate_exit_signals(self, exchange, symbol, current_side, entry_price, max_profit_pct=0, position_tracking=None):
         """
-        智能平仓判断 - 支持动态止盈止损
+        智能平仓判断 - 支持 ATR 动态移动止损
         
         Args:
             max_profit_pct: 持仓期间达到的最大盈利百分比（用于移动止盈）
+            position_tracking: 持仓追踪数据，包含 'highest_price', 'lowest_price', 'atr_stop_price'
         """
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=100)
         df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
@@ -135,65 +141,87 @@ class Strategy:
         
         last = df.iloc[-1]
         prev = df.iloc[-2]
+        current_price = last['close']
         
         # 计算当前盈亏百分比
         if current_side == 'LONG':
-            current_pnl_pct = ((last['close'] - entry_price) / entry_price) * 100
+            current_pnl_pct = ((current_price - entry_price) / entry_price) * 100
         else:  # SHORT
-            current_pnl_pct = ((entry_price - last['close']) / entry_price) * 100
+            current_pnl_pct = ((entry_price - current_price) / entry_price) * 100
         
-        # ========== 1. 紧急止损（硬止损）==========
-        # 亏损超过5%立即止损
-        if current_pnl_pct < -5.0:
+        # ========== 1. ATR 动态移动止损 (ATR Trailing Stop) ==========
+        # 这是主要的止损机制，替代固定百分比止损
+        atr_data = self.calculate_atr_trailing_stop(df, current_side, atr_multiplier=2.0)
+        
+        # 更新持仓追踪中的最高/最低价和ATR止损线
+        if position_tracking is not None:
+            # 更新最高/最低价
+            if current_side == 'LONG':
+                if position_tracking.get('highest_price', 0) == 0:
+                    position_tracking['highest_price'] = current_price
+                else:
+                    position_tracking['highest_price'] = max(position_tracking['highest_price'], current_price)
+                
+                # ATR止损线只上升不下降（保护利润）
+                new_stop = atr_data['stop_price']
+                if 'atr_stop_price' not in position_tracking:
+                    position_tracking['atr_stop_price'] = new_stop
+                else:
+                    # 止损线只能上升（做多时）
+                    position_tracking['atr_stop_price'] = max(position_tracking['atr_stop_price'], new_stop)
+                    
+            else:  # SHORT
+                if position_tracking.get('lowest_price', float('inf')) == float('inf'):
+                    position_tracking['lowest_price'] = current_price
+                else:
+                    position_tracking['lowest_price'] = min(position_tracking['lowest_price'], current_price)
+                
+                # ATR止损线只下降不上升（做空时）
+                new_stop = atr_data['stop_price']
+                if 'atr_stop_price' not in position_tracking:
+                    position_tracking['atr_stop_price'] = new_stop
+                else:
+                    # 止损线只能下降（做空时）
+                    position_tracking['atr_stop_price'] = min(position_tracking['atr_stop_price'], new_stop)
+            
+            # 使用追踪的ATR止损线
+            atr_stop_price = position_tracking['atr_stop_price']
+        else:
+            atr_stop_price = atr_data['stop_price']
+        
+        # 检查是否触发ATR移动止损
+        if current_side == 'LONG':
+            if current_price <= atr_stop_price:
+                return f"atr_trailing_stop: price={current_price:.2f} stop={atr_stop_price:.2f}"
+        else:  # SHORT
+            if current_price >= atr_stop_price:
+                return f"atr_trailing_stop: price={current_price:.2f} stop={atr_stop_price:.2f}"
+        
+        # ========== 2. 紧急止损（硬止损）- 作为最后防线 ==========
+        # 亏损超过10%立即止损（只在极端情况下使用）
+        if current_pnl_pct < -10.0:
             return f"emergency_stop_loss:{current_pnl_pct:.2f}%"
         
-        # ========== 2. 移动止盈（动态止盈）==========
-        # 如果盈利超过3%，启动移动止盈（回撤1.5%止盈）
-        if max_profit_pct > 3.0:
-            drawdown_from_max = max_profit_pct - current_pnl_pct
-            if drawdown_from_max > 1.5:  # 从最高点回撤1.5%
-                return f"trailing_stop:{max_profit_pct:.2f}%->{current_pnl_pct:.2f}%"
-        
-        # 如果盈利超过6%，收紧移动止盈（回撤1%止盈）
-        if max_profit_pct > 6.0:
-            drawdown_from_max = max_profit_pct - current_pnl_pct
-            if drawdown_from_max > 1.0:  # 从最高点回撤1%
-                return f"tight_trailing_stop:{max_profit_pct:.2f}%->{current_pnl_pct:.2f}%"
-        
-        # ========== 3. 趋势反转信号 ==========
-        if current_side == 'LONG':
-            # 价格跌破EMA200（趋势反转）
-            if last['close'] < last['ema200'] * 0.995:  # 允许0.5%的误差
-                return "trend_broken_down"
-            
-            # StochRSI超买区死叉（动量衰竭）
-            if last['stoch_k'] > 80 and last['stoch_k'] < last['stoch_d']:
-                return "momentum_exhaustion_long"
-            
-            # 趋势强度大幅减弱
-            if last['adx'] < prev['adx'] and last['adx'] < 20:
-                return "trend_weakening_long"
-            
-            # 价格触及布林带上轨且出现反转信号
-            if last['close'] > last['bb_upper'] and last['stoch_k'] > 80:
-                return "bb_upper_reversal"
+        # ========== 3. 趋势反转信号（只在有盈利且盈利较大时考虑）==========
+        # 只有在盈利 > 5% 时才考虑趋势反转，避免被洗盘出局
+        if current_pnl_pct > 5.0:
+            if current_side == 'LONG':
+                # 价格跌破EMA200（趋势反转）
+                if last['close'] < last['ema200'] * 0.99:  # 允许1%的误差
+                    return "trend_broken_down"
                 
-        elif current_side == 'SHORT':
-            # 价格突破EMA200（趋势反转）
-            if last['close'] > last['ema200'] * 1.005:  # 允许0.5%的误差
-                return "trend_broken_up"
-            
-            # StochRSI超卖区金叉（动量衰竭）
-            if last['stoch_k'] < 20 and last['stoch_k'] > last['stoch_d']:
-                return "momentum_exhaustion_short"
-            
-            # 趋势强度大幅减弱
-            if last['adx'] < prev['adx'] and last['adx'] < 20:
-                return "trend_weakening_short"
-            
-            # 价格触及布林带下轨且出现反转信号
-            if last['close'] < last['bb_lower'] and last['stoch_k'] < 20:
-                return "bb_lower_reversal"
+                # StochRSI超买区死叉（动量衰竭）
+                if last['stoch_k'] > 85 and last['stoch_k'] < last['stoch_d']:
+                    return "momentum_exhaustion_long"
+                    
+            elif current_side == 'SHORT':
+                # 价格突破EMA200（趋势反转）
+                if last['close'] > last['ema200'] * 1.01:  # 允许1%的误差
+                    return "trend_broken_up"
+                
+                # StochRSI超卖区金叉（动量衰竭）
+                if last['stoch_k'] < 15 and last['stoch_k'] > last['stoch_d']:
+                    return "momentum_exhaustion_short"
 
         # ========== 4. 异常波动/情绪 (Volume Spike) ==========
         if last['volume'] > last['vol_ma'] * 3:
@@ -202,25 +230,102 @@ class Strategy:
                 return "volume_exhaustion_sentiment"
         
         # ========== 5. 大幅回调预警 ==========
-        # 如果短时间内出现大幅回调（1小时内回调超过2%）
-        if len(df) >= 12:  # 1小时 = 12个5分钟K线
+        # 如果短时间内出现大幅回调（1小时内回调超过3%）且盈利超过3%
+        if len(df) >= 12 and current_pnl_pct > 3.0:  # 1小时 = 12个5分钟K线
             recent_high = df['high'].tail(12).max()
             recent_low = df['low'].tail(12).min()
             
             if current_side == 'LONG':
                 drop_from_high = ((recent_high - last['close']) / recent_high) * 100
-                if drop_from_high > 2.0:  # 1小时内从高点回调超过2%
+                if drop_from_high > 3.0:  # 1小时内从高点回调超过3%
                     return f"sharp_pullback_long:{drop_from_high:.2f}%"
             else:  # SHORT
                 rise_from_low = ((last['close'] - recent_low) / recent_low) * 100
-                if rise_from_low > 2.0:  # 1小时内从低点反弹超过2%
+                if rise_from_low > 3.0:  # 1小时内从低点反弹超过3%
                     return f"sharp_pullback_short:{rise_from_low:.2f}%"
 
         return None
     
+    def calculate_atr_trailing_stop(self, df, current_side, atr_multiplier=2.0):
+        """
+        计算 ATR 动态移动止损 (ATR Trailing Stop)
+        
+        原理：
+        - 做多时：止损线 = 最高价 - ATR * multiplier，止损线只上升不下降
+        - 做空时：止损线 = 最低价 + ATR * multiplier，止损线只下降不上升
+        
+        Args:
+            df: DataFrame with OHLCV data
+            current_side: 'LONG' 或 'SHORT'
+            atr_multiplier: ATR倍数（默认2.0倍ATR）
+        
+        Returns:
+            dict: {
+                'stop_price': 当前止损价格,
+                'atr_value': 当前ATR值,
+                'highest_high': 持仓期间最高价（做多）,
+                'lowest_low': 持仓期间最低价（做空）
+            }
+        """
+        # 确保有ATR数据
+        if 'atr' not in df.columns:
+            high_low = df['high'] - df['low']
+            high_close = np.abs(df['high'] - df['close'].shift())
+            low_close = np.abs(df['low'] - df['close'].shift())
+            ranges = pd.concat([high_low, high_close, low_close], axis=1)
+            df['tr'] = np.max(ranges, axis=1)
+            df['atr'] = df['tr'].rolling(14).mean()
+        
+        last = df.iloc[-1]
+        atr_value = last['atr']
+        
+        # 获取最近N根K线的最高/最低价（用于计算移动止损）
+        lookback = min(20, len(df))  # 最近20根K线
+        recent_highs = df['high'].tail(lookback)
+        recent_lows = df['low'].tail(lookback)
+        
+        highest_high = recent_highs.max()
+        lowest_low = recent_lows.min()
+        
+        if current_side == 'LONG':
+            # 做多：止损 = 最高价 - ATR * multiplier
+            stop_price = highest_high - (atr_value * atr_multiplier)
+        else:  # SHORT
+            # 做空：止损 = 最低价 + ATR * multiplier
+            stop_price = lowest_low + (atr_value * atr_multiplier)
+        
+        return {
+            'stop_price': stop_price,
+            'atr_value': atr_value,
+            'highest_high': highest_high,
+            'lowest_low': lowest_low,
+            'atr_multiplier': atr_multiplier
+        }
+    
+    def check_atr_trailing_stop_trigger(self, current_price, trailing_stop_data, current_side):
+        """
+        检查是否触发 ATR 移动止损
+        
+        Args:
+            current_price: 当前价格
+            trailing_stop_data: calculate_atr_trailing_stop 返回的数据
+            current_side: 'LONG' 或 'SHORT'
+        
+        Returns:
+            bool: 是否触发止损
+        """
+        stop_price = trailing_stop_data['stop_price']
+        
+        if current_side == 'LONG':
+            # 做多：当前价格跌破止损线时触发
+            return current_price <= stop_price
+        else:  # SHORT
+            # 做空：当前价格涨破止损线时触发
+            return current_price >= stop_price
+    
     def calculate_dynamic_stop_loss(self, entry_price, current_side, atr_value, volatility_factor=1.5):
         """
-        计算动态止损价格
+        计算动态止损价格（基于入场时的ATR）
         
         Args:
             entry_price: 入场价格

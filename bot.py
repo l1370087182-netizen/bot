@@ -12,7 +12,17 @@ import json
 from datetime import datetime
 
 # ========== 时间偏移修复 ==========
-FORCED_OFFSET_MS = 10000
+# 动态获取时间偏移
+import requests
+
+try:
+    resp = requests.get('https://api.binance.com/api/v3/time', timeout=5)
+    server_time = resp.json()['serverTime']
+    local_time = int(time.time() * 1000)
+    FORCED_OFFSET_MS = local_time - server_time + 1000  # 加1000ms缓冲
+except:
+    FORCED_OFFSET_MS = 3000  # 默认值
+
 _ccxt_milliseconds = ccxt.Exchange.milliseconds
 
 @staticmethod
@@ -52,8 +62,8 @@ class BinanceBot:
             'apiKey': BINANCE_API_KEY,
             'secret': BINANCE_API_SECRET,
             'options': {
-                'adjustForTimeDifference': False,
-                'recvWindow': 60000,
+                'adjustForTimeDifference': True,
+                'recvWindow': 10000,
                 'defaultMarketType': 'future',
             },
             'enableRateLimit': True,
@@ -118,13 +128,17 @@ class BinanceBot:
                 # 在币安双向持仓模式下，同一个 symbol 会有两个 entries
                 # 一个是 LONG，一个是 SHORT。我们只返回有持仓的那一个。
                 if contracts != 0:
-                    entry_price = float(p.get('entryPrice', 0) or 0)
-                    unrealized_pnl = float(p.get('unrealizedPnl', 0) or 0)
-                    leverage = float(p.get('leverage', 10))
+                    try:
+                        entry_price = float(p.get('entryPrice') if p.get('entryPrice') is not None else 0.0)
+                        unrealized_pnl = float(p.get('unrealizedPnl') if p.get('unrealizedPnl') is not None else 0.0)
+                        leverage = float(p.get('leverage') if p.get('leverage') is not None else 10.0)
+                    except (ValueError, TypeError):
+                        entry_price = 0.0
+                        unrealized_pnl = 0.0
+                        leverage = 10.0
                     
                     # 识别持仓方向
-                    # 优先看 'side' (LONG/SHORT)，如果没有则看 contracts 正负
-                    pos_side = p.get('side', '').upper()
+                    pos_side = str(p.get('side', '')).upper()
                     if pos_side not in ['LONG', 'SHORT']:
                         pos_side = 'LONG' if contracts > 0 else 'SHORT'
                     
@@ -137,7 +151,10 @@ class BinanceBot:
                     
                     # 安全获取 markPrice
                     mark_price_raw = p.get('markPrice')
-                    mark_price = float(mark_price_raw) if mark_price_raw is not None else 0.0
+                    try:
+                        mark_price = float(mark_price_raw) if mark_price_raw is not None else entry_price
+                    except (ValueError, TypeError):
+                        mark_price = entry_price
                     
                     return {
                         'side': pos_side,
@@ -172,27 +189,23 @@ class BinanceBot:
                 logging.info(f"[DRY RUN] Would close {symbol} {pos_side} position")
                 return {"id": "dry_run_close"}
             
-            # 1. 尝试使用 closePosition=True 平仓（币安专属参数）
+            # 1. 尝试平仓 - 双向持仓模式下只使用 positionSide
             try:
                 order = self.exchange.create_market_order(
                     symbol, side, amount, 
-                    params={'positionSide': pos_side, 'closePosition': True}
+                    params={'positionSide': pos_side}
                 )
                 logging.info(f"✅ Market Close Successful: {order['id']}")
             except Exception as e:
-                logging.warning(f"⚠️ Close with closePosition failed, trying reduceOnly: {e}")
-                # 2. 尝试使用 reduceOnly 平仓
-                order = self.exchange.create_market_order(
-                    symbol, side, amount, 
-                    params={'positionSide': pos_side, 'reduceOnly': True}
-                )
-                logging.info(f"✅ Reduce Order Successful: {order['id']}")
+                logging.warning(f"⚠️ Close failed: {e}")
+                return None
             
             # 发送通知
             self._notify(f"🚨 平仓成功: {symbol}", f"原因: {reason}\n盈亏: {details['unrealized_pnl']:+.2f} USDT", "warning")
             
-            # 清除追踪记录
+            # 清除追踪记录 - 确保该币种可以重新开仓
             if symbol in self.position_tracking:
+                logging.info(f"🗑️ Clearing position tracking for {symbol}")
                 del self.position_tracking[symbol]
             
             return order
@@ -207,8 +220,40 @@ class BinanceBot:
         with open(notify_file, "w") as f:
             f.write(f"TITLE:{title}\nCONTENT:{content}\nTYPE:{msg_type}\nTIME:{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
+    def _update_status_file(self, open_positions, balance):
+        """更新实时状态文件（供 Web 面板读取）"""
+        try:
+            status = {
+                'timestamp': time.time(),
+                'balance': balance,
+                'position_count': len(open_positions),
+                'positions': []
+            }
+            
+            for symbol in open_positions:
+                details = self.get_position_details(symbol)
+                if details:
+                    tracking = self.position_tracking.get(symbol, {})
+                    status['positions'].append({
+                        'symbol': symbol,
+                        'side': details['side'],
+                        'size': details['size'],
+                        'entry_price': details['entry_price'],
+                        'mark_price': details['mark_price'],
+                        'unrealized_pnl': details['unrealized_pnl'],
+                        'pnl_pct': details['pnl_pct'],
+                        'max_profit': tracking.get('max_profit', 0),
+                        'cycles': tracking.get('cycles', 0)
+                    })
+            
+            status_file = "/home/administrator/.openclaw/workspace/binance_bot/.bot_status"
+            with open(status_file, 'w') as f:
+                json.dump(status, f)
+        except Exception as e:
+            logging.debug(f"Failed to update status file: {e}")
+
     def monitor_positions(self):
-        """实时监控持仓，基于情绪和走势执行平仓 - 支持动态止盈止损"""
+        """实时监控持仓，基于 ATR 移动止损和情绪执行平仓"""
         open_positions = self.get_open_positions()
         
         for symbol in open_positions:
@@ -217,14 +262,18 @@ class BinanceBot:
                 continue
             
             pnl_pct = details['pnl_pct']
+            current_price = details['mark_price']
             
             # 初始化或更新追踪记录
             if symbol not in self.position_tracking:
                 self.position_tracking[symbol] = {
-                    'max_profit': pnl_pct, 
+                    'max_profit': pnl_pct,
                     'cycles': 0,
                     'entry_price': details['entry_price'],
-                    'side': details['side']
+                    'side': details['side'],
+                    'highest_price': current_price if details['side'] == 'LONG' else 0,
+                    'lowest_price': current_price if details['side'] == 'SHORT' else float('inf'),
+                    'atr_stop_price': None
                 }
             
             self.position_tracking[symbol]['cycles'] += 1
@@ -235,9 +284,10 @@ class BinanceBot:
             # 获取最大盈利百分比（用于移动止盈）
             max_profit_pct = self.position_tracking[symbol]['max_profit']
             
-            # 1. 策略级智能平仓判断（走势与情绪 + 动态止盈止损）
+            # 1. 策略级智能平仓判断（ATR移动止损 + 走势与情绪）
             exit_reason = self.strategy.calculate_exit_signals(
-                self.exchange, symbol, details['side'], details['entry_price'], max_profit_pct
+                self.exchange, symbol, details['side'], details['entry_price'], 
+                max_profit_pct, self.position_tracking[symbol]
             )
             
             if exit_reason:
@@ -245,15 +295,19 @@ class BinanceBot:
                 self.close_position(symbol, f"Smart Strategy: {exit_reason}")
                 continue
 
-            # 2. 极端风险控制（硬止损）
-            # 即使策略没说话，如果亏损超过预设极端阈值，也要跑路
-            if pnl_pct <= -10.0: # 极端止损 10%
-                logging.critical(f"🚨 EXTREME STOP: {symbol} PnL {pnl_pct:.2f}% exceeded safety limit")
-                self.close_position(symbol, f"Extreme safety stop: {pnl_pct:.2f}% loss")
+            # 2. 紧急硬止损 (10%) - 最后防线，仅在极端情况下触发
+            if pnl_pct <= -10.0:
+                logging.critical(f"🚨 EMERGENCY STOP: {symbol} PnL {pnl_pct:.2f}% exceeded hard limit")
+                self.close_position(symbol, f"Emergency Stop: {pnl_pct:.2f}%")
                 continue
             
-            # 输出监控日志
-            logging.info(f"📊 {symbol} 监控中 | 盈亏: {pnl_pct:+.2f}% | 最高: {max_profit_pct:+.2f}% | 持仓周期: {self.position_tracking[symbol]['cycles']}")
+            # 输出监控日志（包含ATR止损线信息）
+            atr_stop = self.position_tracking[symbol].get('atr_stop_price', 'N/A')
+            if atr_stop != 'N/A':
+                atr_stop_str = f"ATR止损:{atr_stop:.2f}"
+            else:
+                atr_stop_str = "ATR止损:计算中"
+            logging.info(f"📊 {symbol} 监控中 | 盈亏:{pnl_pct:+.2f}% | 最高:{max_profit_pct:+.2f}% | {atr_stop_str} | 周期:{self.position_tracking[symbol]['cycles']}")
 
     def check_trend_reversal(self, symbol, current_side):
         """检查趋势是否反转"""
@@ -321,38 +375,19 @@ class BinanceBot:
             order = self.exchange.create_market_order(symbol, side, amount, params={'positionSide': pos_side})
             logging.info(f"✅ Market Order Executed: {order['id']}")
             
-            # 4. 设置止损 (ReduceOnly)
-            sl_price = self.risk.calculate_stop_loss_price(side, price)
-            sl_side = 'sell' if side == 'buy' else 'buy'
-            sl_price = self.exchange.price_to_precision(symbol, sl_price)
+            # 纯动态监控平仓 - 不设置固定止损止盈订单
+            # 所有平仓逻辑由 monitor_positions() 动态处理
             
-            try:
-                self.exchange.create_order(
-                    symbol, 'STOP_MARKET', sl_side, amount, None,
-                    {'stopPrice': sl_price, 'positionSide': pos_side, 'reduceOnly': True}
-                )
-                logging.info(f"🛡️ Stop Loss set at {sl_price}")
-            except Exception as e:
-                logging.error(f"⚠️ Failed to set Stop Loss: {e}")
-
-            # 5. 设置止盈 (ReduceOnly)
-            tp_price = self.risk.calculate_take_profit_price(side, price)
-            tp_price = self.exchange.price_to_precision(symbol, tp_price)
-            try:
-                self.exchange.create_order(
-                    symbol, 'TAKE_PROFIT_MARKET', sl_side, amount, None,
-                    {'stopPrice': tp_price, 'positionSide': pos_side, 'reduceOnly': True}
-                )
-                logging.info(f"🎯 Take Profit set at {tp_price}")
-            except Exception as e:
-                logging.error(f"⚠️ Failed to set Take Profit: {e}")
-            
-            # 初始化持仓追踪记录
+            # 初始化持仓追踪记录（包含ATR移动止损所需数据）
             self.position_tracking[symbol] = {
                 'max_profit': 0,
                 'entry_time': time.time(),
                 'cycles': 0,
-                'entry_price': price
+                'entry_price': price,
+                'side': pos_side,
+                'highest_price': price if pos_side == 'LONG' else 0,
+                'lowest_price': price if pos_side == 'SHORT' else float('inf'),
+                'atr_stop_price': None  # 将在第一个监控周期计算
             }
             
             self._notify(f"✅ 开仓成功: {symbol}", f"方向: {pos_side}\n数量: {amount}\n价格: {price}", "success")
@@ -374,17 +409,20 @@ class BinanceBot:
                 logging.info(f"📈 Cycle {cycle_count} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                 logging.info(f"{'='*60}")
                 
-                # 1. 实时监控持仓（每周期都检查）
+                # 1. 获取账户余额
+                current_balance = self.get_balance()
+                logging.info(f"💰 Account Balance: {current_balance:.2f} USDT")
+                
+                # 2. 实时监控持仓（每周期都检查）
                 open_positions = self.get_open_positions()
                 if open_positions:
                     logging.info(f"🔍 Monitoring {len(open_positions)} position(s)...")
                     self.monitor_positions()
+                    
+                # 更新实时状态文件（供 Web 面板读取）
+                self._update_status_file(open_positions, current_balance)
                 
-                # 2. 获取账户余额
-                current_balance = self.get_balance()
-                logging.info(f"💰 Account Balance: {current_balance:.2f} USDT")
-                
-                # 3. 检查是否需要开新仓
+                # 2. 检查是否需要开新仓
                 max_positions = 2
                 open_positions = self.get_open_positions()  # 重新获取（可能已平仓）
                 
@@ -422,7 +460,7 @@ class BinanceBot:
                 time.sleep(10)
 
     def _scan_for_entries(self, open_positions, max_positions, balance):
-        """扫描入场信号 - 使用账户余额50%开仓"""
+        """扫描入场信号 - 使用账户余额50%开仓，单币种仓位限制"""
         signals = self.strategy.calculate_signals(self.exchange)
         
         if signals:
@@ -431,9 +469,16 @@ class BinanceBot:
                 if symbol == 'meta':
                     continue
                 
-                # 检查是否已经在该币种上有仓位
+                # ========== 单币种仓位限制检查 ==========
+                # 检查是否已经在该币种上有仓位（包括做多或做空）
                 if symbol in open_positions:
-                    logging.info(f"⏭️ Already holding {symbol}, skipping...")
+                    logging.info(f"⏭️ Already holding {symbol}, cannot open new position until current one is closed.")
+                    continue
+                
+                # 检查该币种是否正在追踪中（有未完成的仓位记录）
+                # 这确保即使API暂时查询不到仓位，也不会重复开仓
+                if symbol in self.position_tracking:
+                    logging.info(f"⏭️ {symbol} position tracking active, waiting for close confirmation.")
                     continue
                 
                 # 检查趋势是否反转
@@ -445,15 +490,22 @@ class BinanceBot:
                 ticker = self.exchange.fetch_ticker(symbol)
                 price = ticker['last']
                 
-                # 计算仓位：使用余额的95%，但最低不少于14 USDT（兼容小资金账户）
-                position_value = max(balance * 0.95, 14.0)
+                # 计算仓位：使用余额的50%（用户要求）
+                # position_value 是计划投入的保证金
+                margin_to_use = balance * 0.5
                 
-                # 检查余额是否足够开仓（最低14 USDT）
-                if balance < 14:
-                    logging.warning(f"⚠️ Balance too low: {balance:.2f} USDT, need at least 14 USDT")
+                # 计算名义价值（带杠杆）
+                planned_notional = margin_to_use * LEVERAGE
+                
+                # 检查是否满足交易所最小名义价值（通常 5-20 USDT，此处设为 15 为界）
+                if planned_notional < 15:
+                    logging.warning(f"⚠️ Account too small: {balance:.2f} USDT, 50% with {LEVERAGE}x leverage is only {planned_notional:.2f} USDT (min 15)")
                     continue
                 
-                amount = position_value / price
+                # 确保使用50%资产开仓
+                logging.info(f"💰 Using 50% of balance: {balance:.2f} USDT -> Margin: {margin_to_use:.2f} USDT -> Planned Notional: {planned_notional:.2f} USDT")
+                
+                amount = planned_notional / price
                 
                 # 检查最小数量限制
                 min_amount = self.exchange.markets[symbol]['limits']['amount']['min']
