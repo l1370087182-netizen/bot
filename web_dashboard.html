@@ -204,12 +204,161 @@
             padding: 40px;
             color: #8892b0;
         }
+        
+        /* 实时日志样式 */
+        .log-container {
+            background: #0a0e27;
+            border-radius: 8px;
+            padding: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .log-entry {
+            padding: 2px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+        .log-time { color: #667eea; }
+        .log-info { color: #8892b0; }
+        .log-error { color: #ff4757; }
+        .log-warning { color: #ffa502; }
+        .log-trade { color: #00d084; font-weight: bold; }
+        .log-scan { color: #667eea; }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>🚀 Binance Trading Bot</h1>
         <div class="version">v10.0 - 三层防护 + 放大器架构</div>
+    </div>
+    
+    <!-- IP配置面板 -->
+    <div class="card" style="margin-bottom: 20px;">
+        <h3>🌐 币安API IP配置 (手动检测)</h3>
+        <div style="display: flex; gap: 15px; align-items: flex-start; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 250px;">
+                <div style="margin-bottom: 10px;">
+                    <label style="color: #8892b0; font-size: 12px;">当前公网IP</label>
+                    <div id="currentIP" style="font-size: 20px; font-weight: bold; color: #00d084;">点击检测获取</div>
+                    <div id="ipStatus" style="font-size: 11px; color: #8892b0; margin-top: 2px;">未检测</div>
+                </div>
+                <div style="margin-bottom: 10px;">
+                    <label style="color: #8892b0; font-size: 12px;">上次检测时间</label>
+                    <div id="lastCheckTime" style="font-size: 14px; color: #8892b0;">--</div>
+                </div>
+                <div style="margin-bottom: 10px;">
+                    <label style="color: #8892b0; font-size: 12px;">币安连接状态</label>
+                    <div id="binanceStatus" style="font-size: 14px;">未检测</div>
+                </div>
+                <div style="display: flex; gap: 8px; margin-top: 10px;">
+                    <button class="btn btn-primary" onclick="manualCheckIP()" id="manualCheckIPBtn" style="flex: 1; font-size: 12px;">🔍 检测IP</button>
+                    <button class="btn btn-success" onclick="autoUpdateIP()" style="flex: 1; font-size: 12px;">🔄 更新到币安</button>
+                </div>
+                <div id="autoUpdateStatus" style="margin-top: 8px; font-size: 11px; color: #667eea;"></div>
+            </div>
+            <div style="flex: 2; min-width: 300px;">
+                <div style="margin-bottom: 10px;">
+                    <label style="color: #8892b0; font-size: 12px;">API Key (用于自动更新)</label>
+                    <input type="password" id="apiKeyForIP" placeholder="输入API Key以启用自动更新" 
+                           style="width: 100%; padding: 10px; background: #0a0e27; border: 1px solid #2d3561; 
+                                  border-radius: 6px; color: #fff; margin-top: 5px; font-size: 12px;">
+                </div>
+                <div style="margin-bottom: 10px;">
+                    <label style="color: #8892b0; font-size: 12px;">API Secret</label>
+                    <input type="password" id="apiSecretForIP" placeholder="输入API Secret" 
+                           style="width: 100%; padding: 10px; background: #0a0e27; border: 1px solid #2d3561; 
+                                  border-radius: 6px; color: #fff; margin-top: 5px; font-size: 12px;">
+                </div>
+                <div style="background: rgba(102, 126, 234, 0.1); padding: 10px; border-radius: 6px; font-size: 11px; color: #8892b0;">
+                    💡 点击"检测IP"获取当前公网IP，点击"更新到币安"将IP添加到币安API白名单
+                </div>
+            </div>
+        </div>
+        <div id="ipUpdateResult" style="margin-top: 15px; display: none;">
+            <div style="padding: 12px; background: rgba(0, 208, 132, 0.1); border-radius: 8px; border-left: 3px solid #00d084;">
+                <div id="ipUpdateMessage" style="font-size: 13px;"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 预测面板 -->
+    <div class="card" style="margin-bottom: 20px; background: linear-gradient(135deg, #1a1f3a 0%, #2d3561 100%);">
+        <h3>🔮 开单预测 (置信度最高)</h3>
+        <div style="display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
+            <div style="text-align: center; min-width: 150px;">
+                <div class="value" id="predictionTime" style="font-size: 28px;">--</div>
+                <div class="change" id="predictionConfidence" style="margin-top: 5px;">--</div>
+            </div>
+            <div style="flex: 1; min-width: 200px;">
+                <div id="predictionMessage" style="color: #8892b0; margin-bottom: 10px; font-size: 14px;">分析中...</div>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <div class="status-item" style="padding: 8px 12px; background: rgba(0, 208, 132, 0.1); border-color: #00d084;">
+                        <span style="color: #00d084;">🟢 多头: </span>
+                        <span id="longCount" style="color: #00d084; font-weight: bold;">0</span>
+                    </div>
+                    <div class="status-item" style="padding: 8px 12px; background: rgba(255, 71, 87, 0.1); border-color: #ff4757;">
+                        <span style="color: #ff4757;">🔴 空头: </span>
+                        <span id="shortCount" style="color: #ff4757; font-weight: bold;">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="topCandidate" style="margin-top: 15px; padding: 12px; background: rgba(102, 126, 234, 0.1); border-radius: 8px; display: none;">
+            <div style="color: #667eea; font-size: 12px; margin-bottom: 8px;">🎯 最可能先开单的币种:</div>
+            <div id="topCandidateContent" style="font-size: 14px;"></div>
+        </div>
+        
+        <!-- 更新时间显示 -->
+        <div style="margin-top: 15px; text-align: right; font-size: 11px; color: #8892b0;">
+            最后更新: <span id="predictionUpdateTime">--</span> | 每秒自动刷新
+        </div>
+        
+        <!-- 做多/做空排名 -->
+        <div style="margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+            <!-- 做多排名 -->
+            <div style="background: rgba(0, 208, 132, 0.05); border: 1px solid rgba(0, 208, 132, 0.3); border-radius: 8px; padding: 12px;">
+                <div style="color: #00d084; font-size: 13px; font-weight: bold; margin-bottom: 10px; display: flex; align-items: center; gap: 5px;">
+                    🟢 做多机会排名 (Top 5)
+                </div>
+                <table style="width: 100%; font-size: 11px; border-collapse: collapse;">
+                    <thead>
+                        <tr style="color: #8892b0; border-bottom: 1px solid rgba(0, 208, 132, 0.2);">
+                            <th style="text-align: left; padding: 5px;">排名</th>
+                            <th style="text-align: left; padding: 5px;">币种</th>
+                            <th style="text-align: right; padding: 5px;">Stoch</th>
+                            <th style="text-align: right; padding: 5px;">ADX</th>
+                            <th style="text-align: right; padding: 5px;">距离</th>
+                        </tr>
+                    </thead>
+                    <tbody id="longRankingBody">
+                        <tr><td colspan="5" style="text-align: center; padding: 10px; color: #8892b0;">暂无数据</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- 做空排名 -->
+            <div style="background: rgba(255, 71, 87, 0.05); border: 1px solid rgba(255, 71, 87, 0.3); border-radius: 8px; padding: 12px;">
+                <div style="color: #ff4757; font-size: 13px; font-weight: bold; margin-bottom: 10px; display: flex; align-items: center; gap: 5px;">
+                    🔴 做空机会排名 (Top 5)
+                </div>
+                <table style="width: 100%; font-size: 11px; border-collapse: collapse;">
+                    <thead>
+                        <tr style="color: #8892b0; border-bottom: 1px solid rgba(255, 71, 87, 0.2);">
+                            <th style="text-align: left; padding: 5px;">排名</th>
+                            <th style="text-align: left; padding: 5px;">币种</th>
+                            <th style="text-align: right; padding: 5px;">Stoch</th>
+                            <th style="text-align: right; padding: 5px;">ADX</th>
+                            <th style="text-align: right; padding: 5px;">距离</th>
+                        </tr>
+                    </thead>
+                    <tbody id="shortRankingBody">
+                        <tr><td colspan="5" style="text-align: center; padding: 10px; color: #8892b0;">暂无数据</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
     
     <!-- 机器人控制面板 -->
@@ -274,6 +423,22 @@
         </div>
     </div>
     
+    <!-- 实时日志面板 -->
+    <div class="card" style="margin-bottom: 20px;">
+        <h3 style="display: flex; justify-content: space-between; align-items: center;">
+            <span>📜 实时日志 (自动滚动)</span>
+            <span style="font-size: 11px; color: #8892b0; font-weight: normal;">
+                <label style="cursor: pointer;">
+                    <input type="checkbox" id="autoScrollLog" checked style="vertical-align: middle;"> 自动滚动
+                </label>
+                <button onclick="clearLogDisplay()" style="margin-left: 10px; padding: 2px 8px; font-size: 10px; background: #2d3561; border: none; border-radius: 4px; color: #fff; cursor: pointer;">清空</button>
+            </span>
+        </h3>
+        <div class="log-container" id="liveLogContainer">
+            <div style="color: #667eea; text-align: center; padding: 20px;">正在连接日志...</div>
+        </div>
+    </div>
+
     <div class="grid">
         <div class="card" style="grid-column: 1 / -1;">
             <h3>📊 当前持仓</h3>
@@ -357,6 +522,14 @@
             document.getElementById('totalTrades').textContent = 
                 `总交易 ${perf.total_trades || 0} 笔`;
             
+            // 更新今日盈亏
+            const dailyPnl = perf.today_pnl || 0;
+            const dailyPnlEl = document.getElementById('dailyPnl');
+            dailyPnlEl.textContent = (dailyPnl >= 0 ? '+' : '') + dailyPnl.toFixed(2) + ' USDT';
+            dailyPnlEl.className = 'value ' + (dailyPnl >= 0 ? 'positive' : 'negative');
+            document.getElementById('dailyPnlPct').textContent = 
+                `今日 ${perf.today_trades || 0} 笔交易`;
+            
             // 更新持仓
             updatePositions(data.positions || []);
             
@@ -437,41 +610,399 @@
         
         function refreshData() {
             fetchData();
+            fetchPrediction();
+        }
+        
+        // ========== 预测功能 ==========
+        async function fetchPrediction() {
+            try {
+                // 添加时间戳防止缓存，确保获取最新数据
+                const timestamp = Date.now();
+                const response = await fetch('/api/prediction?_t=' + timestamp, {
+                    cache: 'no-store',
+                    headers: { 'Cache-Control': 'no-cache' }
+                });
+                const data = await response.json();
+                console.log('[' + new Date().toLocaleTimeString() + '] Prediction updated:', data.timestamp, 'candidates:', (data.long_candidates?.length || 0) + (data.short_candidates?.length || 0));
+                updatePrediction(data);
+            } catch (e) {
+                console.error('Prediction fetch error:', e);
+            }
+        }
+        
+        function updatePrediction(data) {
+            const timeEl = document.getElementById('predictionTime');
+            const confEl = document.getElementById('predictionConfidence');
+            const msgEl = document.getElementById('predictionMessage');
+            const longCountEl = document.getElementById('longCount');
+            const shortCountEl = document.getElementById('shortCount');
+            const topCandEl = document.getElementById('topCandidate');
+            const topCandContentEl = document.getElementById('topCandidateContent');
+            
+            if (data.status === 'error') {
+                timeEl.textContent = '--';
+                msgEl.textContent = '预测失败: ' + data.message;
+                return;
+            }
+            
+            // 更新预测时间 (显示置信度最高的)
+            timeEl.textContent = data.prediction || '--';
+            
+            // 更新置信度 (突出显示)
+            const confidenceMap = {
+                'high': { text: '高置信度 ⭐⭐⭐', color: '#00d084', bg: 'rgba(0, 208, 132, 0.2)' },
+                'medium': { text: '中等置信度 ⭐⭐', color: '#ffa502', bg: 'rgba(255, 165, 2, 0.2)' },
+                'low': { text: '低置信度 ⭐', color: '#ff4757', bg: 'rgba(255, 71, 87, 0.2)' }
+            };
+            
+            // 处理各种可能的置信度值
+            let confKey = data.confidence;
+            if (!confKey || confKey === 'unknown' || !(confKey in confidenceMap)) {
+                // 根据候选数量推断置信度
+                const totalCandidates = (data.long_candidates?.length || 0) + (data.short_candidates?.length || 0);
+                if (totalCandidates >= 5) confKey = 'high';
+                else if (totalCandidates >= 2) confKey = 'medium';
+                else confKey = 'low';
+            }
+            
+            const conf = confidenceMap[confKey];
+            confEl.innerHTML = conf.text;
+            confEl.style.color = conf.color;
+            confEl.style.background = conf.bg;
+            confEl.style.padding = '4px 12px';
+            confEl.style.borderRadius = '4px';
+            confEl.style.display = 'inline-block';
+            
+            // 更新消息
+            msgEl.textContent = data.message || '分析中...';
+            
+            // 更新候选数量
+            const longCount = data.long_candidates ? data.long_candidates.length : 0;
+            const shortCount = data.short_candidates ? data.short_candidates.length : 0;
+            longCountEl.textContent = longCount;
+            shortCountEl.textContent = shortCount;
+            
+            // 显示最可能的币种 (距离条件最近的)
+            let topCandidate = null;
+            let topType = '';
+            
+            // 找距离条件最近的币
+            if (data.long_candidates && data.long_candidates.length > 0) {
+                const closestLong = data.long_candidates.reduce((prev, curr) => 
+                    prev.distance < curr.distance ? prev : curr
+                );
+                if (!topCandidate || closestLong.distance < topCandidate.distance) {
+                    topCandidate = closestLong;
+                    topType = '多头';
+                }
+            }
+            
+            if (data.short_candidates && data.short_candidates.length > 0) {
+                const closestShort = data.short_candidates.reduce((prev, curr) => 
+                    prev.distance < curr.distance ? prev : curr
+                );
+                if (!topCandidate || closestShort.distance < topCandidate.distance) {
+                    topCandidate = closestShort;
+                    topType = '空头';
+                }
+            }
+            
+            if (topCandidate) {
+                topCandEl.style.display = 'block';
+                const color = topType === '多头' ? '#00d084' : '#ff4757';
+                topCandContentEl.innerHTML = `
+                    <span style="color: ${color}; font-weight: bold;">${topCandidate.coin}</span> 
+                    (${topType}) - 
+                    Stoch: ${topCandidate.stoch.toFixed(1)}, 
+                    ADX: ${topCandidate.adx.toFixed(1)}, 
+                    距离: ${topCandidate.distance.toFixed(1)}点
+                `;
+            } else {
+                topCandEl.style.display = 'none';
+            }
+            
+            // 更新做多排名表格
+            updateRankingTable('longRankingBody', data.long_candidates, '#00d084', true);
+            // 更新做空排名表格
+            updateRankingTable('shortRankingBody', data.short_candidates, '#ff4757', false);
+            
+            // 更新时间戳
+            const updateTimeEl = document.getElementById('predictionUpdateTime');
+            if (updateTimeEl && data.timestamp) {
+                updateTimeEl.textContent = new Date(data.timestamp).toLocaleTimeString();
+            }
+        }
+        
+        // 存储上一次的排名数据用于比较
+        let lastLongCandidates = [];
+        let lastShortCandidates = [];
+        
+        // 更新排名表格
+        function updateRankingTable(tableId, candidates, color, isLong) {
+            const tbody = document.getElementById(tableId);
+            if (!candidates || candidates.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 10px; color: #8892b0;">暂无符合条件的币种</td></tr>';
+                return;
+            }
+            
+            // 按距离排序（距离越小越接近条件）
+            const sorted = candidates.sort((a, b) => a.distance - b.distance).slice(0, 5);
+            
+            // 获取上一次的对比数据
+            const lastCandidates = isLong ? lastLongCandidates : lastShortCandidates;
+            
+            tbody.innerHTML = sorted.map((c, index) => {
+                // 查找上一次的数据
+                const lastData = lastCandidates.find(lc => lc.coin === c.coin);
+                let distanceChange = '';
+                let changeColor = '';
+                
+                if (lastData) {
+                    const diff = c.distance - lastData.distance;
+                    if (Math.abs(diff) > 0.1) {
+                        if (diff < 0) {
+                            distanceChange = '↓';
+                            changeColor = isLong ? '#ff4757' : '#00d084'; // 距离变小 = 接近条件
+                        } else {
+                            distanceChange = '↑';
+                            changeColor = isLong ? '#00d084' : '#ff4757'; // 距离变大 = 远离条件
+                        }
+                    }
+                }
+                
+                return `<tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    <td style="padding: 6px 5px; color: ${color}; font-weight: bold;">#${index + 1}</td>
+                    <td style="padding: 6px 5px; color: #fff; font-weight: 500;">${c.coin}</td>
+                    <td style="padding: 6px 5px; text-align: right; color: ${c.stoch < 30 ? '#00d084' : c.stoch > 70 ? '#ff4757' : '#ffa502'};">${c.stoch.toFixed(1)}</td>
+                    <td style="padding: 6px 5px; text-align: right; color: ${c.adx > 25 ? '#00d084' : '#8892b0'};">${c.adx.toFixed(1)}</td>
+                    <td style="padding: 6px 5px; text-align: right; color: ${color}; font-weight: bold;">${c.distance.toFixed(1)} <span style="color: ${changeColor}; font-size: 10px;">${distanceChange}</span></td>
+                </tr>`;
+            }).join('');
+            
+            // 保存当前数据供下次比较
+            if (isLong) {
+                lastLongCandidates = JSON.parse(JSON.stringify(sorted));
+            } else {
+                lastShortCandidates = JSON.parse(JSON.stringify(sorted));
+            }
+        }
+        
+        // ========== IP配置功能 (手动检测) ==========
+        let lastIP = null;
+        
+        // 页面加载时获取缓存的IP
+        async function fetchIPStatus() {
+            try {
+                const response = await fetch('/api/ip/current');
+                const data = await response.json();
+                
+                if (data.current_ip && data.current_ip !== 'unknown') {
+                    document.getElementById('currentIP').textContent = data.current_ip;
+                    document.getElementById('currentIP').style.color = '#00d084';
+                    lastIP = data.current_ip;
+                    
+                    // 显示缓存时间
+                    const ipStatusEl = document.getElementById('ipStatus');
+                    const lastCheckEl = document.getElementById('lastCheckTime');
+                    if (data.cached_at) {
+                        ipStatusEl.textContent = '已缓存';
+                        lastCheckEl.textContent = new Date(data.cached_at).toLocaleString();
+                    } else {
+                        ipStatusEl.textContent = '未检测';
+                        lastCheckEl.textContent = '--';
+                    }
+                } else {
+                    document.getElementById('currentIP').textContent = '点击检测获取';
+                    document.getElementById('currentIP').style.color = '#8892b0';
+                    document.getElementById('ipStatus').textContent = '未检测';
+                    document.getElementById('lastCheckTime').textContent = '--';
+                }
+            } catch (e) {
+                console.error('IP status fetch error:', e);
+                document.getElementById('currentIP').textContent = '获取失败';
+                document.getElementById('currentIP').style.color = '#ff4757';
+            }
+        }
+        
+        // 手动检测IP按钮功能
+        async function manualCheckIP() {
+            const btn = document.getElementById('manualCheckIPBtn');
+            const statusEl = document.getElementById('autoUpdateStatus');
+            const ipEl = document.getElementById('currentIP');
+            const ipStatusEl = document.getElementById('ipStatus');
+            const binanceStatusEl = document.getElementById('binanceStatus');
+            
+            btn.textContent = '检测中...';
+            btn.disabled = true;
+            ipEl.textContent = '检测中...';
+            ipEl.style.color = '#ffa502';
+            binanceStatusEl.textContent = '检测中...';
+            binanceStatusEl.style.color = '#ffa502';
+            statusEl.textContent = '正在获取公网IP并检测币安连接...';
+            
+            try {
+                // 调用POST接口检测IP
+                const response = await fetch('/api/ip/check', {method: 'POST'});
+                const data = await response.json();
+                
+                if (data.success) {
+                    ipEl.textContent = data.current_ip;
+                    ipEl.style.color = '#00d084';
+                    ipStatusEl.textContent = data.ip_changed ? 'IP已变化!' : '已缓存';
+                    lastIP = data.current_ip;
+                    
+                    // 更新检测时间
+                    document.getElementById('lastCheckTime').textContent = 
+                        new Date(data.cached_at).toLocaleString();
+                    
+                    // 更新币安连接状态
+                    if (data.binance_status === 'connected') {
+                        binanceStatusEl.innerHTML = '<span class="positive">✅ 已连接</span>';
+                    } else if (data.binance_status === 'disconnected') {
+                        binanceStatusEl.innerHTML = '<span class="negative">❌ 未连接</span>';
+                    } else {
+                        binanceStatusEl.innerHTML = '<span class="warning">⚠️ 检测失败</span>';
+                    }
+                    
+                    if (data.ip_changed) {
+                        statusEl.innerHTML = '<span class="warning">⚠️ IP已变化! 建议更新到币安</span>';
+                    } else {
+                        statusEl.innerHTML = '<span class="positive">✅ 检测完成</span>';
+                    }
+                } else {
+                    ipEl.textContent = '检测失败';
+                    ipEl.style.color = '#ff4757';
+                    binanceStatusEl.textContent = '检测失败';
+                    binanceStatusEl.style.color = '#ff4757';
+                    statusEl.innerHTML = '<span class="negative">❌ ' + (data.error || '未知错误') + '</span>';
+                }
+            } catch (e) {
+                ipEl.textContent = '检测失败';
+                ipEl.style.color = '#ff4757';
+                binanceStatusEl.textContent = '检测失败';
+                binanceStatusEl.style.color = '#ff4757';
+                statusEl.innerHTML = '<span class="negative">❌ 检测失败: ' + e.message + '</span>';
+            } finally {
+                btn.textContent = '🔍 检测IP';
+                btn.disabled = false;
+            }
+        }
+        
+        async function autoUpdateIP() {
+            const apiKey = document.getElementById('apiKeyForIP').value.trim();
+            const apiSecret = document.getElementById('apiSecretForIP').value.trim();
+            const resultEl = document.getElementById('ipUpdateResult');
+            const msgEl = document.getElementById('ipUpdateMessage');
+            const statusEl = document.getElementById('autoUpdateStatus');
+            
+            // 检查是否已检测IP
+            if (!lastIP) {
+                statusEl.innerHTML = '<span class="warning">⚠️ 请先点击"检测IP"获取当前IP</span>';
+                return;
+            }
+            
+            statusEl.innerHTML = '<span class="warning">正在更新IP到币安...</span>';
+            
+            try {
+                const response = await fetch('/api/ip/auto-update', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        api_key: apiKey,
+                        api_secret: apiSecret
+                    })
+                });
+                
+                const data = await response.json();
+                resultEl.style.display = 'block';
+                
+                if (data.success) {
+                    msgEl.innerHTML = '<span class="positive">✅ ' + data.message + '</span>';
+                    if (data.manual_steps) {
+                        msgEl.innerHTML += '<br><br><span style="color: #8892b0; font-size: 11px;">手动步骤:<br>' + data.manual_steps.join('<br>') + '</span>';
+                    }
+                    statusEl.innerHTML = '<span class="positive">✅ 更新完成</span>';
+                } else {
+                    msgEl.innerHTML = '<span class="negative">❌ ' + data.message + '</span>';
+                    statusEl.innerHTML = '';
+                }
+            } catch (e) {
+                msgEl.innerHTML = '<span class="negative">更新失败: ' + e + '</span>';
+                statusEl.innerHTML = '';
+            }
         }
         
         // ========== 机器人控制 ==========
         async function startBot() {
+            const btn = document.querySelector('button[onclick="startBot()"]');
+            btn.disabled = true;
+            btn.textContent = '▶️ 启动中...';
+            
             try {
                 const response = await fetch('/api/bot/start', {method: 'POST'});
                 const data = await response.json();
                 showMessage(data.message, data.success ? 'success' : 'error');
-                updateBotStatus();
+                
+                // 等待2秒后更新状态
+                setTimeout(() => {
+                    updateBotStatus();
+                    btn.disabled = false;
+                    btn.textContent = '▶️ 启动';
+                }, 2000);
             } catch (e) {
                 showMessage('启动失败: ' + e, 'error');
+                btn.disabled = false;
+                btn.textContent = '▶️ 启动';
             }
         }
         
         async function stopBot() {
-            if (!confirm('确定要停止机器人吗？')) return;
+            if (!confirm('确定要停止机器人吗？\n\n这会强制停止所有机器人进程！')) return;
+            
+            const btn = document.querySelector('button[onclick="stopBot()"]');
+            btn.disabled = true;
+            btn.textContent = '⏹️ 停止中...';
+            
             try {
                 const response = await fetch('/api/bot/stop', {method: 'POST'});
                 const data = await response.json();
                 showMessage(data.message, data.success ? 'success' : 'error');
-                updateBotStatus();
+                
+                // 等待2秒后更新状态
+                setTimeout(() => {
+                    updateBotStatus();
+                    btn.disabled = false;
+                    btn.textContent = '⏹️ 停止';
+                }, 2000);
             } catch (e) {
                 showMessage('停止失败: ' + e, 'error');
+                btn.disabled = false;
+                btn.textContent = '⏹️ 停止';
             }
         }
         
         async function restartBot() {
-            if (!confirm('确定要重启机器人吗？')) return;
+            if (!confirm('确定要重启机器人吗？\n\n这会先停止所有进程，然后重新启动！')) return;
+            
+            const btn = document.querySelector('button[onclick="restartBot()"]');
+            btn.disabled = true;
+            btn.textContent = '🔄 重启中...';
+            
             try {
                 const response = await fetch('/api/bot/restart', {method: 'POST'});
                 const data = await response.json();
                 showMessage(data.message, data.success ? 'success' : 'error');
-                updateBotStatus();
+                
+                // 等待3秒后更新状态
+                setTimeout(() => {
+                    updateBotStatus();
+                    btn.disabled = false;
+                    btn.textContent = '🔄 重启';
+                }, 3000);
             } catch (e) {
                 showMessage('重启失败: ' + e, 'error');
+                btn.disabled = false;
+                btn.textContent = '🔄 重启';
             }
         }
         
@@ -503,9 +1034,16 @@
         }
         
         // ========== 日志查看 ==========
+        let logRefreshInterval = null;
+        let lastLogCount = 0;
+        
         async function showLogs() {
             document.getElementById('logModal').style.display = 'block';
             await loadLogs();
+            // 启动日志自动刷新 (每2秒)
+            if (!logRefreshInterval) {
+                logRefreshInterval = setInterval(loadLogs, 2000);
+            }
         }
         
         async function loadLogs() {
@@ -514,19 +1052,29 @@
                 const data = await response.json();
                 
                 const logContent = document.getElementById('logContent');
-                logContent.innerHTML = data.logs.map(log => {
-                    const color = {
-                        'ERROR': '#ff4757',
-                        'WARNING': '#ffa502',
-                        'TRADE': '#00d084',
-                        'INFO': '#8892b0'
-                    }[log.level] || '#8892b0';
-                    
-                    return `<div style="color: ${color}; margin-bottom: 4px; font-family: monospace; font-size: 12px;">${escapeHtml(log.line)}</div>`;
-                }).join('');
+                const currentScrollTop = logContent.scrollTop;
+                const isAtBottom = (logContent.scrollHeight - logContent.clientHeight - currentScrollTop) < 50;
                 
-                // 滚动到底部
-                logContent.scrollTop = logContent.scrollHeight;
+                // 只有当日志数量变化时才更新DOM
+                if (data.logs.length !== lastLogCount) {
+                    logContent.innerHTML = data.logs.map(log => {
+                        const color = {
+                            'ERROR': '#ff4757',
+                            'WARNING': '#ffa502',
+                            'TRADE': '#00d084',
+                            'INFO': '#8892b0'
+                        }[log.level] || '#8892b0';
+                        
+                        return `<div style="color: ${color}; margin-bottom: 4px; font-family: monospace; font-size: 12px;">${escapeHtml(log.line)}</div>`;
+                    }).join('');
+                    
+                    lastLogCount = data.logs.length;
+                    
+                    // 如果之前在底部，自动滚动到底部
+                    if (isAtBottom) {
+                        logContent.scrollTop = logContent.scrollHeight;
+                    }
+                }
             } catch (e) {
                 document.getElementById('logContent').innerHTML = '加载日志失败: ' + e;
             }
@@ -534,6 +1082,11 @@
         
         function closeLogs() {
             document.getElementById('logModal').style.display = 'none';
+            // 停止日志自动刷新
+            if (logRefreshInterval) {
+                clearInterval(logRefreshInterval);
+                logRefreshInterval = null;
+            }
         }
         
         function escapeHtml(text) {
@@ -542,15 +1095,107 @@
             return div.innerHTML;
         }
         
+        // ========== 实时日志显示 ==========
+        let liveLogLines = [];
+        let liveLogInterval = null;
+        
+        function parseLogLine(line) {
+            // 解析日志级别
+            let level = 'info';
+            if (line.includes('ERROR') || line.includes('❌')) level = 'error';
+            else if (line.includes('WARNING') || line.includes('⚠️')) level = 'warning';
+            else if (line.includes('BUY') || line.includes('SELL') || line.includes('🎯') || line.includes('开仓')) level = 'trade';
+            else if (line.includes('扫描') || line.includes('🏁')) level = 'scan';
+            
+            // 解析时间
+            const timeMatch = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/);
+            const time = timeMatch ? timeMatch[1].split(' ')[1] : '';
+            
+            // 提取消息内容
+            let message = line;
+            if (timeMatch) {
+                message = line.substring(timeMatch[0].length).replace(/-\s*(INFO|ERROR|WARNING|DEBUG)	*/, '').trim();
+            }
+            
+            return { time, level, message };
+        }
+        
+        function updateLiveLogDisplay() {
+            const container = document.getElementById('liveLogContainer');
+            const autoScroll = document.getElementById('autoScrollLog')?.checked ?? true;
+            
+            if (!container || liveLogLines.length === 0) return;
+            
+            // 只显示最近50行
+            const displayLines = liveLogLines.slice(-50);
+            
+            container.innerHTML = displayLines.map(log => {
+                const parsed = parseLogLine(log);
+                const levelClass = `log-${parsed.level}`;
+                
+                return `<div class="log-entry ${levelClass}">
+                    <span class="log-time">${parsed.time}</span>
+                    <span class="${levelClass}">${escapeHtml(parsed.message)}</span>
+                </div>`;
+            }).join('');
+            
+            // 自动滚动到底部
+            if (autoScroll) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+        
+        async function fetchLiveLogs() {
+            try {
+                const response = await fetch('/api/logs?lines=50');
+                const data = await response.json();
+                
+                if (data.logs && data.logs.length > 0) {
+                    // 提取日志行
+                    const newLines = data.logs.map(l => l.line);
+                    
+                    // 检查是否有新日志
+                    if (JSON.stringify(newLines) !== JSON.stringify(liveLogLines)) {
+                        liveLogLines = newLines;
+                        updateLiveLogDisplay();
+                    }
+                }
+            } catch (e) {
+                console.error('Live log fetch error:', e);
+            }
+        }
+        
+        function clearLogDisplay() {
+            liveLogLines = [];
+            document.getElementById('liveLogContainer').innerHTML = '<div style="color: #667eea; text-align: center; padding: 20px;">日志已清空</div>';
+        }
+        
+        function startLiveLog() {
+            // 立即获取一次
+            fetchLiveLogs();
+            // 每2秒刷新一次日志
+            if (!liveLogInterval) {
+                liveLogInterval = setInterval(fetchLiveLogs, 2000);
+            }
+        }
+        
         // 初始加载
         fetchData();
+        fetchPrediction();
         updateBotStatus();
+        fetchIPStatus(); // 加载缓存的IP
+        startLiveLog();  // 启动实时日志
         
-        // 每5秒自动刷新
+        // 每5秒自动刷新 (账户数据)
         refreshInterval = setInterval(() => {
             fetchData();
             updateBotStatus();
         }, 5000);
+        
+        // 预测排名每秒刷新 (实时更新)
+        setInterval(() => {
+            fetchPrediction();
+        }, 1000);
     </script>
     
     <!-- 日志模态框 -->

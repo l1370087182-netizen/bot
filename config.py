@@ -8,6 +8,10 @@ load_dotenv()
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
 BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET')
 
+# Telegram Configuration
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '8622569590:AAHmgZHIqP1L50_9mXXch7-jKJ5jz5b_LMI')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '6555213810')  # 你的Telegram用户ID
+
 # Validate API keys are set
 if not BINANCE_API_KEY or not BINANCE_API_SECRET:
     raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET must be set in .env file")
@@ -154,8 +158,8 @@ MIN_ORDER_VALUE_USDT = 10.0  # 最小名义价值 10 USDT (降低门槛)
 # 动态杠杆配置 - 基于保证金比率
 DYNAMIC_LEVERAGE = {
     'enabled': True,  # 启用动态杠杆
-    'max_leverage': 10,  # 最大杠杆
-    'min_leverage': 3,   # 最小杠杆
+    'max_leverage': 20,  # 最大杠杆
+    'min_leverage': 5,   # 最小杠杆
     'target_margin_ratio': 0.2,  # 目标保证金占用比例 (20%)
     'min_margin_amount': 5.0,    # 最小保证金金额 (USDT)
 }

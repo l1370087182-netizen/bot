@@ -86,9 +86,10 @@ check_time_error() {
     fi
 }
 
-# 检查网络错误
+# 检查网络错误（排除正常的INFO日志中的error字样）
 check_network_error() {
-    if tail -20 $BOT_DIR/bot.log 2>/dev/null | grep -qE "(Connection|Timeout|Network|error|Error)"; then
+    # 只检查真正的错误，排除普通的INFO日志
+    if tail -50 $BOT_DIR/bot.log 2>/dev/null | grep -E "^.*ERROR.*" | grep -qE "(Connection|Timeout|Network|Request|API)"; then
         return 0
     else
         return 1
@@ -154,12 +155,22 @@ start_bot() {
 
 # 检查机器人健康状态
 check_bot_health() {
-    # 检查最近是否有成功获取余额的记录
-    if tail -30 $BOT_DIR/bot.log 2>/dev/null | grep -q "Account Balance"; then
-        return 0
-    else
-        return 1
+    # 检查最近5分钟内是否有成功获取余额的记录
+    local recent_balance=$(tail -500 $BOT_DIR/bot.log 2>/dev/null | grep "Account Balance" | tail -1)
+    if [ -n "$recent_balance" ]; then
+        # 提取时间戳并检查是否在5分钟内
+        local log_time=$(echo "$recent_balance" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}')
+        if [ -n "$log_time" ]; then
+            local log_epoch=$(date -d "$log_time" +%s 2>/dev/null || echo 0)
+            local current_epoch=$(date +%s)
+            local diff=$((current_epoch - log_epoch))
+            # 如果最近5分钟内有余额更新，认为是健康的
+            if [ $diff -lt 300 ]; then
+                return 0
+            fi
+        fi
     fi
+    return 1
 }
 
 # 主逻辑
@@ -169,8 +180,16 @@ RESTART_REASON=""
 if check_bot_running; then
     log "✅ 机器人进程正在运行"
     
+    # 检查是否有多个进程在运行
+    BOT_COUNT=$(pgrep -f "python3 bot.py --real" | wc -l)
+    if [ $BOT_COUNT -gt 1 ]; then
+        log "⚠️ 检测到 $BOT_COUNT 个机器人进程在运行，需要清理"
+        pkill -f "python3 bot.py --real" 2>/dev/null
+        sleep 2
+        NEED_RESTART=true
+        RESTART_REASON="多进程冲突清理"
     # 检查健康状态
-    if check_bot_health; then
+    elif check_bot_health; then
         log "✅ 机器人健康状态良好"
     else
         log "⚠️ 机器人进程存在但可能卡住"
