@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+.env
+.bot_status
+.ip_cache
+bot.pid
+bot.log
+trades.db
+
+*.bak
+_tmp_dashboard_script.js
+
+.idea/
+.vscode/

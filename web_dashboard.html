@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Binance Bot Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg: #0a1022;
+            --panel: #141c36;
+            --panel-2: #1b2545;
+            --line: #2c396a;
+            --text: #f3f6ff;
+            --muted: #9fb0d9;
+            --green: #00d084;
+            --red: #ff5f6d;
+            --amber: #ffb020;
+            --blue: #4da3ff;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 24px;
+            background:
+                radial-gradient(circle at top right, rgba(77, 163, 255, 0.18), transparent 28%),
+                radial-gradient(circle at top left, rgba(0, 208, 132, 0.12), transparent 22%),
+                var(--bg);
+            color: var(--text);
+            font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        }
+        .container {
+            max-width: 1520px;
+            margin: 0 auto;
+        }
+        .hero {
+            padding: 24px 28px;
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            background: linear-gradient(135deg, rgba(20,28,54,0.96), rgba(27,37,69,0.96));
+            margin-bottom: 18px;
+        }
+        .hero h1 {
+            margin: 0 0 8px;
+            font-size: 30px;
+        }
+        .hero p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 15px;
+        }
+        .toolbar, .status-bar {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin: 16px 0;
+        }
+        .pill, .btn {
+            border: 1px solid var(--line);
+            background: rgba(20, 28, 54, 0.85);
+            border-radius: 999px;
+            color: var(--text);
+            padding: 10px 16px;
+            font-size: 14px;
+        }
+        .pill { display: inline-flex; align-items: center; gap: 10px; }
+        .btn { cursor: pointer; transition: transform 0.15s ease, background 0.15s ease; }
+        .btn:hover { transform: translateY(-1px); background: rgba(34, 47, 88, 0.95); }
+        .btn.success { background: rgba(0, 208, 132, 0.16); }
+        .btn.danger { background: rgba(255, 95, 109, 0.16); }
+        .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--amber);
+            box-shadow: 0 0 12px currentColor;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 16px;
+            margin-bottom: 18px;
+        }
+        .card {
+            border: 1px solid var(--line);
+            background: rgba(20, 28, 54, 0.9);
+            border-radius: 18px;
+            padding: 18px;
+        }
+        .card h3, .section-title {
+            margin: 0 0 12px;
+            font-size: 13px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+        .metric-value {
+            font-size: 30px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .metric-sub {
+            font-size: 13px;
+            color: var(--muted);
+        }
+        .positive { color: var(--green); }
+        .negative { color: var(--red); }
+        .warning { color: var(--amber); }
+        .board {
+            display: grid;
+            grid-template-columns: 1.1fr 1.1fr 0.8fr;
+            gap: 16px;
+            margin-bottom: 18px;
+            align-items: start;
+        }
+        .ranking-list {
+            display: grid;
+            gap: 10px;
+        }
+        .ranking-item {
+            display: grid;
+            grid-template-columns: 48px 1.2fr 0.8fr 0.7fr 0.7fr;
+            gap: 10px;
+            align-items: center;
+            padding: 12px 14px;
+            border-radius: 14px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.04);
+            position: relative;
+            overflow: visible;
+        }
+        .ranking-item.ready-candidate {
+            border-color: rgba(0, 208, 132, 0.75);
+            box-shadow: 0 0 0 1px rgba(0, 208, 132, 0.15), inset 0 0 0 1px rgba(0, 208, 132, 0.1);
+            background: linear-gradient(135deg, rgba(0, 208, 132, 0.10), rgba(255,255,255,0.03));
+        }
+        .rank-badge {
+            font-weight: 700;
+            color: var(--amber);
+        }
+        .symbol-cell strong {
+            display: block;
+            font-size: 15px;
+        }
+        .tiny {
+            display: block;
+            font-size: 12px;
+            color: var(--muted);
+            margin-top: 3px;
+        }
+        .score-chip {
+            justify-self: end;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            background: rgba(77, 163, 255, 0.14);
+            color: #b7d4ff;
+        }
+        .hover-reasons {
+            position: absolute;
+            left: 14px;
+            right: 14px;
+            top: calc(100% + 8px);
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: rgba(8, 12, 24, 0.98);
+            border: 1px solid rgba(255,255,255,0.08);
+            color: var(--text);
+            font-size: 12px;
+            line-height: 1.5;
+            box-shadow: 0 14px 32px rgba(0,0,0,0.35);
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(-6px);
+            transition: opacity 0.15s ease, transform 0.15s ease;
+            z-index: 12;
+        }
+        .ranking-item:hover .hover-reasons {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .market-box {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            min-height: 420px;
+        }
+        .market-chart-wrap {
+            position: relative;
+            height: 240px;
+            min-height: 240px;
+            max-height: 240px;
+        }
+        .market-chart-wrap canvas {
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
+        }
+        .market-condition {
+            padding: 14px;
+            border-radius: 14px;
+            background: rgba(255,255,255,0.03);
+            color: var(--text);
+            font-size: 20px;
+            font-weight: 700;
+            text-align: center;
+        }
+        .market-meta {
+            text-align: center;
+            color: var(--muted);
+            font-size: 12px;
+        }
+        .positions-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .positions-table th, .positions-table td {
+            padding: 12px 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+            text-align: left;
+            font-size: 13px;
+        }
+        .positions-table th {
+            color: var(--muted);
+            font-weight: 600;
+        }
+        .scan-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+        .scan-card {
+            border: 1px solid var(--line);
+            background: rgba(20, 28, 54, 0.92);
+            border-radius: 18px;
+            padding: 16px;
+        }
+        .scan-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .scan-title strong {
+            font-size: 18px;
+        }
+        .scan-title .tiny {
+            margin-top: 4px;
+        }
+        .scan-stats {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px 12px;
+            margin-bottom: 12px;
+        }
+        .stat-box {
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.03);
+        }
+        .stat-box span {
+            display: block;
+            color: var(--muted);
+            font-size: 11px;
+            margin-bottom: 3px;
+        }
+        .reason-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .reason-chip {
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            background: rgba(255,255,255,0.05);
+        }
+        .logs-wrap {
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            background: rgba(9, 13, 27, 0.92);
+            padding: 16px;
+        }
+        .logs {
+            max-height: 460px;
+            overflow-y: auto;
+            font-family: Consolas, Monaco, monospace;
+            font-size: 12px;
+            line-height: 1.65;
+        }
+        .log-row {
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .log-time {
+            color: var(--muted);
+            margin-right: 10px;
+        }
+        .log-ERROR { color: var(--red); }
+        .log-WARNING { color: var(--amber); }
+        .log-TRADE { color: var(--blue); }
+        .log-SIGNAL { color: var(--green); }
+        .footer {
+            padding: 18px 0 4px;
+            text-align: center;
+            color: var(--muted);
+            font-size: 12px;
+        }
+        @media (max-width: 1200px) {
+            .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .board { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 760px) {
+            body { padding: 14px; }
+            .grid { grid-template-columns: 1fr; }
+            .ranking-item { grid-template-columns: 42px 1fr; }
+            .ranking-item > :nth-child(n+3) { justify-self: start; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <h1>📈 Binance Bot 交易监控面板</h1>
+            <p>排行榜直接基于 Binance API + 你的策略分数计算，扫描卡会显示每个币的关键指标和未达到开仓条件的原因。</p>
+        </div>
+
+        <div class="status-bar">
+            <div class="pill"><span class="dot" id="botStatusDot"></span><span id="botStatus">检查中</span></div>
+            <div class="pill">💵 余额 <strong id="balance">--</strong> USDT</div>
+            <div class="pill">🧾 持仓 <strong id="positionCount">--</strong></div>
+            <div class="pill" id="beijingTime">🕒 --</div>
+        </div>
+
+        <div class="toolbar">
+            <button class="btn success" onclick="startBot()">▶ 启动机器人</button>
+            <button class="btn danger" onclick="stopBot()">■ 停止机器人</button>
+            <button class="btn" onclick="restartBot()">↻ 重启机器人</button>
+            <button class="btn" onclick="refreshData()">⟳ 立即刷新</button>
+            <button class="btn" onclick="checkIP()">🌐 检查出口 IP</button>
+        </div>
+
+        <div class="card" id="ipPanel" style="display:none; margin-bottom:18px;">
+            <h3>出口网络</h3>
+            <div class="metric-sub">当前 IP: <strong id="currentIP">--</strong></div>
+            <div class="metric-sub">Binance 连通性: <strong id="binanceStatus">--</strong></div>
+            <div class="metric-sub">最近检测: <strong id="ipCachedAt">--</strong></div>
+            <div class="metric-sub" id="ipMessage" style="margin-top:10px;"></div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h3>今日盈亏</h3>
+                <div class="metric-value" id="todayPnl">--</div>
+                <div class="metric-sub" id="todayTrades">--</div>
+            </div>
+            <div class="card">
+                <h3>累计盈亏</h3>
+                <div class="metric-value" id="totalPnl">--</div>
+                <div class="metric-sub" id="totalStats">--</div>
+            </div>
+            <div class="card">
+                <h3>胜率</h3>
+                <div class="metric-value" id="winRateValue">--</div>
+                <div class="metric-sub" id="winRateDetail">--</div>
+            </div>
+            <div class="card">
+                <h3>开仓预测</h3>
+                <div class="metric-value" id="prediction">--</div>
+                <div class="metric-sub" id="predictionMessage">--</div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-bottom:18px;">
+            <div class="section-title">当前持仓</div>
+            <table class="positions-table">
+                <thead>
+                    <tr>
+                        <th>币种</th>
+                        <th>方向</th>
+                        <th>数量</th>
+                        <th>入场价</th>
+                        <th>标记价</th>
+                        <th>盈亏%</th>
+                        <th>杠杆</th>
+                    </tr>
+                </thead>
+                <tbody id="positionsTable">
+                    <tr><td colspan="7">暂无持仓</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="board">
+            <div class="card">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px;">
+                    <div class="section-title" style="margin:0;">🚀 做多排行榜</div>
+                    <label class="tiny" style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                        <input type="checkbox" id="readyOnlyToggle">
+                        仅显示满足开仓条件
+                    </label>
+                </div>
+                <div class="ranking-list" id="longRanking"></div>
+            </div>
+            <div class="card">
+                <div class="section-title">🔻 做空排行榜</div>
+                <div class="ranking-list" id="shortRanking"></div>
+            </div>
+            <div class="card market-box">
+                <div class="section-title">市场局势</div>
+                <div class="market-condition" id="marketCondition">加载中...</div>
+                <div class="market-chart-wrap">
+                    <canvas id="marketChart"></canvas>
+                </div>
+                <div class="market-meta" id="marketUpdatedAt">--</div>
+            </div>
+        </div>
+
+        <div class="section-title">🔎 币种扫描诊断</div>
+        <div class="scan-grid" id="scanDiagnostics"></div>
+
+        <div class="logs-wrap">
+            <div class="section-title">🧾 实时日志</div>
+            <div class="logs" id="logs"></div>
+        </div>
+
+        <div class="footer" id="serverTime">--</div>
+    </div>
+
+    <script>
+        let marketChart = null;
+        let lastLongSignature = '';
+        let lastShortSignature = '';
+        let lastMarketUpdate = '';
+        let lastLogHash = '';
+        let rankingEventSource = null;
+        let readyOnly = false;
+        let latestRankingPayload = null;
+        let latestScanRows = [];
+        let lastScanSignature = '';
+        let isFetchingRankings = false;
+        let isFetchingSummary = false;
+        let isFetchingPrediction = false;
+        let isFetchingLogs = false;
+
+        function formatSigned(value, digits = 2, suffix = '') {
+            const num = Number(value || 0);
+            return `${num >= 0 ? '+' : ''}${num.toFixed(digits)}${suffix}`;
+        }
+
+        function updateBeijingTime() {
+            const now = new Date();
+            const beijing = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+            document.getElementById('beijingTime').textContent = `🕒 ${beijing.toLocaleString('zh-CN')}`;
+        }
+
+        function renderRankingItems(elementId, rows, type) {
+            const container = document.getElementById(elementId);
+            const cachedRows = latestRankingPayload
+                ? (type === 'long' ? (latestRankingPayload.long_rankings || []) : (latestRankingPayload.short_rankings || []))
+                : [];
+            if ((!rows || !rows.length) && cachedRows.length) {
+                rows = cachedRows;
+            }
+            const filteredRows = (readyOnly ? rows.filter(row => row.ready) : rows).slice(0, 5);
+            const existingItems = new Map(
+                Array.from(container.querySelectorAll('.ranking-item[data-symbol]')).map(item => [item.dataset.symbol, item])
+            );
+
+            if (!filteredRows.length) {
+                container.innerHTML = `<div class="metric-sub">暂无${type === 'long' ? '做多' : '做空'}评分数据</div>`;
+                return;
+            }
+
+            filteredRows.forEach((row, index) => {
+                let item = existingItems.get(row.symbol);
+                if (!item) {
+                    item = document.createElement('div');
+                    item.className = 'ranking-item';
+                    item.dataset.symbol = row.symbol;
+                    item.innerHTML = `
+                        <div class="rank-badge"></div>
+                        <div class="symbol-cell">
+                            <strong class="rank-symbol"></strong>
+                            <span class="tiny rank-meta"></span>
+                        </div>
+                        <div>ADX<br><span class="tiny rank-adx"></span></div>
+                        <div>Stoch<br><span class="tiny rank-stoch"></span></div>
+                        <div class="score-chip rank-score"></div>
+                        <div class="hover-reasons rank-reasons"></div>
+                    `;
+                    container.appendChild(item);
+                }
+
+                item.classList.toggle('ready-candidate', !!row.ready);
+                item.querySelector('.rank-badge').textContent = `#${index + 1}`;
+                item.querySelector('.rank-symbol').textContent = `${row.ready ? '🔥' : '🧭'} ${row.symbol}`;
+                item.querySelector('.rank-meta').textContent = `${formatSigned(row.change_24h, 2, '%')} · Funding ${formatSigned(row.funding, 4, '%')}`;
+                item.querySelector('.rank-adx').textContent = Number(row.adx).toFixed(1);
+                item.querySelector('.rank-stoch').textContent = Number(row.stoch).toFixed(1);
+                item.querySelector('.rank-score').textContent = Number(row.score).toFixed(1);
+                item.querySelector('.rank-reasons').textContent = row.ready
+                    ? '✅ 该币种当前已满足这一侧开仓条件'
+                    : ((row.failed_reasons || []).length ? `未满足原因：${row.failed_reasons.join(' ｜ ')}` : '暂无未满足原因');
+
+                existingItems.delete(row.symbol);
+            });
+
+            existingItems.forEach(item => item.remove());
+
+            const ordered = filteredRows
+                .map(row => container.querySelector(`.ranking-item[data-symbol="${CSS.escape(row.symbol)}"]`))
+                .filter(Boolean);
+            ordered.forEach(item => container.appendChild(item));
+        }
+
+        function renderScanDiagnostics(rows) {
+            const container = document.getElementById('scanDiagnostics');
+            if ((!rows || !rows.length) && latestScanRows.length) {
+                rows = latestScanRows;
+            }
+            if (!rows || !rows.length) {
+                if (!container.querySelector('.scan-empty')) {
+                    container.innerHTML = '<div class="card scan-empty">暂无扫描结果</div>';
+                }
+                return;
+            }
+            latestScanRows = rows;
+
+            const emptyCard = container.querySelector('.scan-empty');
+            if (emptyCard) emptyCard.remove();
+
+            const existingCards = new Map(
+                Array.from(container.querySelectorAll('.scan-card[data-symbol]')).map(card => [card.dataset.symbol, card])
+            );
+
+            rows.forEach(row => {
+                const preferredLong = row.long_score >= row.short_score;
+                const conditionRows = preferredLong ? (row.long_conditions || []) : (row.short_conditions || []);
+                const sideText = preferredLong ? '做多' : '做空';
+                const sideEmoji = preferredLong ? '🚀' : '🔻';
+                const statusText = row.long_ready || row.short_ready ? '✅ 已满足至少一侧开仓条件' : '⚠ 当前尚未达到开仓条件';
+                let card = existingCards.get(row.symbol);
+
+                if (!card) {
+                    card = document.createElement('div');
+                    card.className = 'scan-card';
+                    card.dataset.symbol = row.symbol;
+                    card.innerHTML = `
+                        <div class="scan-head">
+                            <div class="scan-title">
+                                <strong class="scan-symbol"></strong>
+                                <span class="tiny scan-bias"></span>
+                            </div>
+                            <div class="scan-change"></div>
+                        </div>
+                        <div class="scan-stats">
+                            <div class="stat-box"><span>最新价格</span><strong class="scan-price"></strong></div>
+                            <div class="stat-box"><span>Funding</span><strong class="scan-funding"></strong></div>
+                            <div class="stat-box"><span>ADX</span><strong class="scan-adx"></strong></div>
+                            <div class="stat-box"><span>Stoch</span><strong class="scan-stoch"></strong></div>
+                        </div>
+                        <div class="metric-sub scan-status"></div>
+                        <div class="reason-list scan-reasons"></div>
+                    `;
+                    container.appendChild(card);
+                }
+
+                card.querySelector('.scan-symbol').textContent = `${sideEmoji} ${row.symbol}`;
+                card.querySelector('.scan-bias').textContent = `偏向${sideText} · Long ${Number(row.long_score).toFixed(1)} / Short ${Number(row.short_score).toFixed(1)}`;
+
+                const changeEl = card.querySelector('.scan-change');
+                changeEl.textContent = formatSigned(row.change_24h, 2, '%');
+                changeEl.className = `scan-change ${row.change_24h >= 0 ? 'positive' : 'negative'}`;
+
+                card.querySelector('.scan-price').textContent = Number(row.price).toFixed(4);
+                card.querySelector('.scan-funding').textContent = formatSigned(row.funding, 4, '%');
+                card.querySelector('.scan-adx').textContent = Number(row.adx).toFixed(1);
+                card.querySelector('.scan-stoch').textContent = Number(row.stoch).toFixed(1);
+                card.querySelector('.scan-status').textContent = statusText;
+
+                const reasonList = card.querySelector('.scan-reasons');
+                const nextReasonMarkup = conditionRows.map(item => `
+                    <span class="reason-chip ${item.ok ? 'positive' : 'warning'}">${item.emoji} ${item.label}</span>
+                `).join('');
+                if (reasonList.innerHTML !== nextReasonMarkup) {
+                    reasonList.innerHTML = nextReasonMarkup;
+                }
+
+                existingCards.delete(row.symbol);
+            });
+
+            existingCards.forEach(card => card.remove());
+
+            const orderedCards = rows
+                .map(row => container.querySelector(`.scan-card[data-symbol="${CSS.escape(row.symbol)}"]`))
+                .filter(Boolean);
+            orderedCards.forEach(card => container.appendChild(card));
+        }
+
+        function updateMarketChart(stats) {
+            const ctx = document.getElementById('marketChart').getContext('2d');
+            const numbers = [stats.up || 0, stats.down || 0, stats.neutral || 0];
+            if (!marketChart) {
+                marketChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['上涨', '下跌', '震荡'],
+                        datasets: [{
+                            data: numbers,
+                            backgroundColor: ['#00d084', '#ff5f6d', '#ffb020'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: false,
+                        plugins: {
+                            legend: {
+                                position: 'bottom',
+                                labels: { color: '#f3f6ff' }
+                            }
+                        }
+                    }
+                });
+                return;
+            }
+            marketChart.data.datasets[0].data = numbers;
+            marketChart.update('none');
+        }
+
+        function applyRankingPayload(data) {
+            if (!data || data.error) return;
+            latestRankingPayload = data;
+            const longSignature = data.ranking_signature?.long || '';
+            const shortSignature = data.ranking_signature?.short || '';
+            const longContainer = document.getElementById('longRanking');
+            const shortContainer = document.getElementById('shortRanking');
+            if (longSignature !== lastLongSignature || !longContainer.innerHTML.trim()) {
+                lastLongSignature = longSignature;
+                renderRankingItems('longRanking', data.long_rankings || [], 'long');
+            }
+            if (shortSignature !== lastShortSignature || !shortContainer.innerHTML.trim()) {
+                lastShortSignature = shortSignature;
+                renderRankingItems('shortRanking', data.short_rankings || [], 'short');
+            }
+
+            const condition = data.market_condition || '未知';
+            const emoji = condition === '上涨' ? '🟢' : (condition === '下跌' ? '🔴' : '🟡');
+            document.getElementById('marketCondition').textContent = `${emoji} ${condition}`;
+
+            const chartUpdated = data.market_stats?.updated_at || '';
+            if (chartUpdated !== lastMarketUpdate) {
+                lastMarketUpdate = chartUpdated;
+                updateMarketChart(data.market_stats || {});
+                document.getElementById('marketUpdatedAt').textContent = `扇形图更新时间: ${chartUpdated || '--'} · 30min 刷新`;
+            }
+
+            const nextScanSignature = data.scan_signature || '';
+            const scanContainer = document.getElementById('scanDiagnostics');
+            if (nextScanSignature !== lastScanSignature || !scanContainer.querySelector('.scan-card')) {
+                lastScanSignature = nextScanSignature;
+                renderScanDiagnostics(data.scan_details || []);
+            }
+            if (data.timestamp) {
+                document.getElementById('serverTime').textContent = `服务器时间: ${data.timestamp}`;
+            }
+        }
+
+        async function fetchRankings() {
+            if (isFetchingRankings) return;
+            isFetchingRankings = true;
+            try {
+                const response = await fetch(`/api/rankings?t=${Date.now()}`);
+                const data = await response.json();
+                applyRankingPayload(data);
+            } catch (error) {
+                console.error('获取排行榜失败', error);
+            } finally {
+                isFetchingRankings = false;
+            }
+        }
+
+        async function fetchSummary() {
+            if (isFetchingSummary) return;
+            isFetchingSummary = true;
+            try {
+                const response = await fetch(`/api/summary?t=${Date.now()}`);
+                const data = await response.json();
+                const botRunning = !!data.bot_running;
+                const connectionState = data.bot_connection?.state || 'unknown';
+                let botStatusText = '机器人已停止';
+                let botStatusColor = '#ff5f6d';
+                if (botRunning && connectionState === 'limited') {
+                    botStatusText = '连接受限';
+                    botStatusColor = '#ffb020';
+                } else if (botRunning) {
+                    botStatusText = '机器人运行中';
+                    botStatusColor = '#00d084';
+                }
+                document.getElementById('botStatus').textContent = botStatusText;
+                document.getElementById('botStatusDot').style.background = botStatusColor;
+
+                const status = data.status || {};
+                document.getElementById('balance').textContent = Number(status.balance || 0).toFixed(2);
+                document.getElementById('positionCount').textContent = status.position_count || (status.positions || []).length || 0;
+
+                const perf = data.performance || {};
+                const todayPnl = Number(perf.today_pnl || 0);
+                const totalPnl = Number(perf.net_pnl || 0);
+                const winRate = Number(perf.win_rate || 0);
+
+                const todayEl = document.getElementById('todayPnl');
+                todayEl.textContent = `${todayPnl >= 0 ? '+' : ''}${todayPnl.toFixed(2)} USDT`;
+                todayEl.className = `metric-value ${todayPnl >= 0 ? 'positive' : 'negative'}`;
+                document.getElementById('todayTrades').textContent = `今日交易 ${perf.today_trades || 0} 笔`;
+
+                const totalEl = document.getElementById('totalPnl');
+                totalEl.textContent = `${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} USDT`;
+                totalEl.className = `metric-value ${totalPnl >= 0 ? 'positive' : 'negative'}`;
+                document.getElementById('totalStats').textContent = `累计 ${perf.total_trades || 0} 笔交易`;
+
+                const winEl = document.getElementById('winRateValue');
+                winEl.textContent = `${winRate.toFixed(1)}%`;
+                winEl.className = `metric-value ${winRate >= 50 ? 'positive' : 'warning'}`;
+                document.getElementById('winRateDetail').textContent = `盈利 ${perf.winning_trades || 0} / 亏损 ${perf.losing_trades || 0}`;
+
+                const positions = data.positions || [];
+                const tbody = document.getElementById('positionsTable');
+                const existingRows = new Map(
+                    Array.from(tbody.querySelectorAll('tr[data-symbol]')).map(row => [row.dataset.symbol, row])
+                );
+                const emptyRow = tbody.querySelector('tr[data-empty]');
+                if (!positions.length) {
+                    if (!emptyRow) {
+                        tbody.innerHTML = '<tr data-empty="1"><td colspan="7">暂无持仓</td></tr>';
+                    }
+                } else {
+                    if (emptyRow) emptyRow.remove();
+                    positions.forEach(row => {
+                        let tr = existingRows.get(row.symbol);
+                        if (!tr) {
+                            tr = document.createElement('tr');
+                            tr.dataset.symbol = row.symbol || '';
+                            tr.innerHTML = `
+                                <td class="pos-symbol"></td>
+                                <td class="pos-side"></td>
+                                <td class="pos-size"></td>
+                                <td class="pos-entry"></td>
+                                <td class="pos-mark"></td>
+                                <td class="pos-pnl"></td>
+                                <td class="pos-lev"></td>
+                            `;
+                            tbody.appendChild(tr);
+                        }
+                        tr.querySelector('.pos-symbol').textContent = row.symbol || '--';
+                        tr.querySelector('.pos-side').textContent = row.side || '--';
+                        tr.querySelector('.pos-size').textContent = Number(row.size || 0).toFixed(4);
+                        tr.querySelector('.pos-entry').textContent = Number(row.entry_price || 0).toFixed(4);
+                        tr.querySelector('.pos-mark').textContent = Number(row.mark_price || 0).toFixed(4);
+                        const pnlEl = tr.querySelector('.pos-pnl');
+                        pnlEl.textContent = `${Number(row.pnl_pct || 0).toFixed(2)}%`;
+                        pnlEl.className = `pos-pnl ${Number(row.pnl_pct || 0) >= 0 ? 'positive' : 'negative'}`;
+                        tr.querySelector('.pos-lev').textContent = `${row.leverage || '--'}x`;
+                        existingRows.delete(row.symbol);
+                    });
+                    existingRows.forEach(row => row.remove());
+                }
+
+                if (data.rankings) {
+                    applyRankingPayload({
+                        long_rankings: data.rankings.long || [],
+                        short_rankings: data.rankings.short || [],
+                        market_condition: data.rankings.market_condition,
+                        market_stats: data.rankings.market_stats,
+                        ranking_signature: data.rankings.signature || {}
+                    });
+                }
+            } catch (error) {
+                console.error('获取总览失败', error);
+            } finally {
+                isFetchingSummary = false;
+            }
+        }
+
+        async function fetchPrediction() {
+            if (isFetchingPrediction) return;
+            isFetchingPrediction = true;
+            try {
+                const response = await fetch(`/api/prediction?t=${Date.now()}`);
+                const data = await response.json();
+                document.getElementById('prediction').textContent = data.prediction || '--';
+                document.getElementById('predictionMessage').textContent = data.message || '--';
+            } catch (error) {
+                console.error('获取信号预测失败', error);
+            } finally {
+                isFetchingPrediction = false;
+            }
+        }
+
+        async function fetchLogs() {
+            if (isFetchingLogs) return;
+            isFetchingLogs = true;
+            try {
+                const response = await fetch(`/api/logs?lines=140&t=${Date.now()}`);
+                const data = await response.json();
+                const logs = data.logs || [];
+                const hash = logs.map(item => `${item.timestamp}${item.line}`).join('|');
+                if (hash === lastLogHash) return;
+                lastLogHash = hash;
+                const container = document.getElementById('logs');
+                const shouldStickToBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
+                const existingRows = Array.from(container.querySelectorAll('.log-row'));
+                while (existingRows.length > logs.length) {
+                    existingRows.pop().remove();
+                }
+                logs.forEach((item, index) => {
+                    let row = existingRows[index];
+                    if (!row) {
+                        row = document.createElement('div');
+                        row.className = 'log-row';
+                        row.innerHTML = '<span class="log-time"></span><span class="log-text"></span>';
+                        container.appendChild(row);
+                    }
+                    const text = (item.line || '').replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,\.\d]*\s+-\s+\w+\s+-\s+/, '');
+                    row.querySelector('.log-time').textContent = item.timestamp || '--';
+                    const textEl = row.querySelector('.log-text');
+                    textEl.textContent = text;
+                    textEl.className = `log-text log-${item.level || 'INFO'}`;
+                });
+                if (shouldStickToBottom) {
+                    container.scrollTop = container.scrollHeight;
+                }
+            } catch (error) {
+                console.error('获取日志失败', error);
+            } finally {
+                isFetchingLogs = false;
+            }
+        }
+
+        function connectRankingStream() {
+            if (rankingEventSource) rankingEventSource.close();
+            rankingEventSource = new EventSource('/stream');
+            rankingEventSource.onmessage = (event) => {
+                const payload = JSON.parse(event.data);
+                applyRankingPayload(payload);
+            };
+            rankingEventSource.onerror = () => {
+                if (rankingEventSource) rankingEventSource.close();
+                setTimeout(connectRankingStream, 3000);
+            };
+        }
+
+        async function startBot() {
+            if (!confirm('确定启动机器人吗？')) return;
+            const response = await fetch('/api/bot/start', { method: 'POST' });
+            const data = await response.json();
+            alert(data.message || '已提交');
+            refreshData();
+        }
+
+        async function stopBot() {
+            if (!confirm('确定停止机器人吗？')) return;
+            const response = await fetch('/api/bot/stop', { method: 'POST' });
+            const data = await response.json();
+            alert(data.message || '已提交');
+            refreshData();
+        }
+
+        async function restartBot() {
+            if (!confirm('确定重启机器人吗？')) return;
+            const response = await fetch('/api/bot/restart', { method: 'POST' });
+            const data = await response.json();
+            alert(data.message || '已提交');
+            refreshData();
+        }
+
+        async function checkIP() {
+            document.getElementById('ipPanel').style.display = 'block';
+            document.getElementById('ipMessage').textContent = '检查中...';
+            const response = await fetch('/api/ip/check', { method: 'POST' });
+            const data = await response.json();
+            document.getElementById('currentIP').textContent = data.current_ip || '--';
+            document.getElementById('binanceStatus').textContent = data.binance_status || '--';
+            document.getElementById('ipCachedAt').textContent = data.cached_at || '--';
+            document.getElementById('ipMessage').textContent = data.ip_changed ? '⚠ IP 发生变化，请检查白名单。' : '✅ IP 与连接状态正常。';
+        }
+
+        function refreshData() {
+            fetchSummary();
+            fetchRankings();
+            fetchPrediction();
+            fetchLogs();
+        }
+
+        document.getElementById('readyOnlyToggle').addEventListener('change', (event) => {
+            readyOnly = event.target.checked;
+            if (latestRankingPayload) {
+                renderRankingItems('longRanking', latestRankingPayload.long_rankings || [], 'long');
+                renderRankingItems('shortRanking', latestRankingPayload.short_rankings || [], 'short');
+            }
+        });
+
+        updateBeijingTime();
+        refreshData();
+        connectRankingStream();
+        setInterval(updateBeijingTime, 1000);
+        setInterval(fetchSummary, 15000);
+        setInterval(fetchRankings, 30000);
+        setInterval(fetchPrediction, 30000);
+        setInterval(fetchLogs, 3000);
+    </script>
+</body>
+</html>
