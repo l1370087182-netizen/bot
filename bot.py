@@ -22,6 +22,8 @@ import time
 import random
 import re
 
+BAN_CACHE_FILE = '.binance_ban_cache.json'
+
 # 可选模块（不存在就跳过）
 RiskManager = None
 trade_recorder = None
@@ -35,9 +37,7 @@ formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 file_handler = logging.FileHandler('bot.log', mode='a', encoding='utf-8')
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(formatter)
-logger.addHandler(console_handler)
+logger.propagate = False
 
 
 class WebSocketBot:
@@ -96,15 +96,22 @@ class WebSocketBot:
         self.exchange = ccxtpro.binanceusdm(config)
         if self.testnet:
             self.exchange.set_sandbox_mode(True)
+
+        ban_wait = self._get_cached_ban_wait()
+        if ban_wait > 0:
+            logger.warning(f"[RATE-LIMIT] 检测到历史封禁窗口，延迟 {ban_wait:.0f}s 后再尝试连接 Binance API")
+            await asyncio.sleep(ban_wait)
         
         # 10次重试
         for attempt in range(10):
             try:
                 logger.info(f"[INIT] 第 {attempt+1}/10 次尝试连接 Binance API...")
                 await self.exchange.load_markets()
+                self._clear_ban_cache()
                 logger.info("✅ 交易所连接成功！")
                 return
             except Exception as e:
+                self._cache_ban_from_error(e)
                 wait = max((2 ** attempt) + random.uniform(0.5, 2.0), self._parse_retry_after(e, default_wait=10.0))
                 logger.warning(f"❌ 第 {attempt+1} 次失败: {str(e)[:80]}... {wait:.1f}秒后重试")
                 await asyncio.sleep(wait)
@@ -156,76 +163,44 @@ class WebSocketBot:
             return float(min(100, cvd_ratio * 50))
         except Exception:
             return 50.0
+    @staticmethod
+    def _failed_checks(checks):
+        return [label for label, ok in checks if not ok]
+
 
     async def _build_signal_from_cache(self, symbol: str):
         df_15m, df_1h = self._get_indicator_frames(symbol)
         if df_15m is None or df_1h is None:
             return None
 
-        curr = df_15m.iloc[-1]
-        last_closed = df_15m.iloc[-2]
-        prev_closed = df_15m.iloc[-3]
+        market_confirm_df = None
+        leader_symbol = MARKET_REGIME.get('leader_symbol')
+        if leader_symbol:
+            if leader_symbol == symbol:
+                market_confirm_df = df_1h
+            else:
+                _, market_confirm_df = self._get_indicator_frames(leader_symbol)
+
         funding_rate = self.funding_rates.get(symbol, 0.0)
         cvd_strength = self._calculate_cvd_strength(df_15m)
-        vol_ok = self.strategy.check_volatility_filter(df_15m)
-        adx_threshold = INDICATORS['adx']['threshold']
+        signal_state = self.strategy.evaluate_signal_setup(
+            df_15m, df_1h, funding_rate, cvd_strength, market_confirm_df=market_confirm_df, symbol=symbol
+        )
+        if not signal_state:
+            return None
 
+        curr = signal_state['curr']
+        last_closed = signal_state['last_closed']
         logger.info(
-            f"📊 {symbol} | 价格:${last_closed['close']:.2f} | EMA200:${last_closed['ema200']:.2f} | "
+            f"[SCAN] {symbol} | Price:${last_closed['close']:.2f} | EMA200:${last_closed['ema200']:.2f} | "
             f"ADX:{curr['adx']:.1f} | Stoch:{last_closed['stoch_k']:.1f} | Funding:{funding_rate:.4%}"
         )
 
-        long_stoch_ok = last_closed['stoch_k'] < INDICATORS['stoch_rsi']['oversold']
-        long_ema_ok = last_closed['close'] > last_closed['ema200']
-        golden_cross = last_closed['stoch_k'] > last_closed['stoch_d'] and prev_closed['stoch_k'] <= prev_closed['stoch_d']
-        short_stoch_ok = last_closed['stoch_k'] > INDICATORS['stoch_rsi']['overbought']
-        short_ema_ok = last_closed['close'] < last_closed['ema200']
-        dead_cross = last_closed['stoch_k'] < last_closed['stoch_d'] and prev_closed['stoch_k'] >= prev_closed['stoch_d']
+        if signal_state['signal']:
+            return signal_state['signal']
 
-        adx_ok = curr['adx'] > adx_threshold
-        long_checks_pass = vol_ok and adx_ok and long_stoch_ok and long_ema_ok and golden_cross
-        short_checks_pass = vol_ok and adx_ok and short_stoch_ok and short_ema_ok and dead_cross
-
-        if long_checks_pass:
-            long_confirm = await self.strategy.check_multitimeframe_confirm(self.exchange, symbol, 'buy', df_15m, df_1h)
-            if long_confirm:
-                score = self.strategy.calculate_signal_score(curr['adx'], last_closed['stoch_k'], cvd_strength, funding_rate, 'buy')
-                return {'side': 'buy', 'score': score, 'adx': curr['adx'], 'stoch': last_closed['stoch_k'], 'funding': funding_rate}
-            logger.info(f"⏸️ {symbol} 做多-1h确认失败")
-        else:
-            fail_reasons = []
-            if not vol_ok:
-                fail_reasons.append("波动率")
-            if not adx_ok:
-                fail_reasons.append(f"ADX({curr['adx']:.1f}<{adx_threshold})")
-            if not long_stoch_ok:
-                fail_reasons.append(f"Stoch({last_closed['stoch_k']:.1f}>{INDICATORS['stoch_rsi']['oversold']})")
-            if not long_ema_ok:
-                fail_reasons.append(f"EMA(价格{last_closed['close']:.2f}<EMA{last_closed['ema200']:.2f})")
-            if not golden_cross:
-                fail_reasons.append(f"金叉(K{last_closed['stoch_k']:.1f}不大于D{last_closed['stoch_d']:.1f})")
-            logger.info(f"⏸️ {symbol} 做多条件不满足: {' | '.join(fail_reasons)}")
-
-        if short_checks_pass:
-            short_confirm = await self.strategy.check_multitimeframe_confirm(self.exchange, symbol, 'sell', df_15m, df_1h)
-            if short_confirm:
-                score = self.strategy.calculate_signal_score(curr['adx'], last_closed['stoch_k'], cvd_strength, funding_rate, 'sell')
-                return {'side': 'sell', 'score': score, 'adx': curr['adx'], 'stoch': last_closed['stoch_k'], 'funding': funding_rate}
-            logger.info(f"⏸️ {symbol} 做空-1h确认失败")
-        else:
-            fail_reasons = []
-            if not vol_ok:
-                fail_reasons.append("波动率")
-            if not adx_ok:
-                fail_reasons.append(f"ADX({curr['adx']:.1f}<{adx_threshold})")
-            if not short_stoch_ok:
-                fail_reasons.append(f"Stoch({last_closed['stoch_k']:.1f}<{INDICATORS['stoch_rsi']['overbought']})")
-            if not short_ema_ok:
-                fail_reasons.append(f"EMA(价格{last_closed['close']:.2f}>EMA{last_closed['ema200']:.2f})")
-            if not dead_cross:
-                fail_reasons.append(f"死叉(K{last_closed['stoch_k']:.1f}不小于D{last_closed['stoch_d']:.1f})")
-            logger.info(f"⏸️ {symbol} 做空条件不满足: {' | '.join(fail_reasons)}")
-
+        logger.info(f"[SIGNAL] {symbol} long blocked: {' | '.join(self._failed_checks(signal_state['long_checks']))}")
+        logger.info(f"[SIGNAL] {symbol} short blocked: {' | '.join(self._failed_checks(signal_state['short_checks']))}")
         return None
 
     def _sync_position_cache(self, positions: List[dict]):
@@ -300,38 +275,25 @@ class WebSocketBot:
                 await asyncio.sleep(5)
     
     async def _on_15m_closed(self, symbol: str):
-        """15m K线关闭时的回调 - 完全兼容原strategy"""
+        """15m K????????"""
         try:
-            # 检查持仓管理
             if symbol in self.positions:
                 key_15m = self._get_cache_key(symbol, '15m')
                 ohlcv_15m = self.kline_cache.get(key_15m, [])
                 if len(ohlcv_15m) >= 50:
                     df_15m = self._ohlcv_to_df(ohlcv_15m)
                     await self._check_position_management(symbol, df_15m)
-            
+
             signal_data = await self._build_signal_from_cache(symbol)
-            
             if signal_data:
                 side = signal_data.get('side')
-                
-                # Funding过滤
-                funding = self.funding_rates.get(symbol, 0)
-                if funding > 0.0005 and side == 'buy':
-                    logger.info(f"[FUNDING] {symbol} Funding正值，跳过做多")
-                    return
-                elif funding < -0.0005 and side == 'sell':
-                    logger.info(f"[FUNDING] {symbol} Funding负值，跳过做空")
-                    return
-                
-                logger.info(f"[SIGNAL] {symbol} 触发 {side} 信号 | 分数:{signal_data.get('score', 0):.1f}")
-                
+                logger.info(f"[SIGNAL] {symbol} trigger {side} | score:{signal_data.get('score', 0):.1f} | risk:{signal_data.get('risk_multiplier', 1.0):.2f}")
                 if await self._can_open_position(symbol, side):
                     await self._open_position(symbol, side, signal_data)
-                    
+
         except Exception as e:
-            logger.error(f"[STRATEGY] {symbol} 信号计算失败: {e}")
-    
+            logger.error(f"[STRATEGY] {symbol} signal build failed: {e}")
+
     async def _check_position_management(self, symbol: str, df: pd.DataFrame):
         """检查持仓管理 - 修复PARTIAL_EXIT和Breakeven Bug"""
         if symbol not in self.positions:
@@ -350,7 +312,7 @@ class WebSocketBot:
                 executed_exits=self.executed_exits.get(symbol, []),
                 current_additions=self.position_additions.get(symbol, 0),
                 breakeven_triggered=position.get('breakeven_triggered', False),
-                df=df_15m
+                df=df
             )
             
             if not result:
@@ -411,12 +373,56 @@ class WebSocketBot:
         if "429" in message or "418" in message or '"code":-1003' in message or "Too many requests" in message:
             return max(default_wait, 120.0)
         return default_wait
+
+    @staticmethod
+    def _ban_cache_path() -> str:
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), BAN_CACHE_FILE)
+
+    def _get_cached_ban_wait(self) -> float:
+        try:
+            path = self._ban_cache_path()
+            if not os.path.exists(path):
+                return 0.0
+            with open(path, 'r', encoding='utf-8') as handle:
+                data = json.load(handle)
+            retry_at_ms = int(data.get('retry_at_ms', 0) or 0)
+            now_ms = int(time.time() * 1000)
+            if retry_at_ms <= now_ms:
+                self._clear_ban_cache()
+                return 0.0
+            return (retry_at_ms - now_ms) / 1000 + 2
+        except Exception:
+            return 0.0
+
+    def _cache_ban_from_error(self, error: Exception):
+        try:
+            message = str(error)
+            retry_at_ms = None
+            banned_match = re.search(r"banned until (\d{13})", message)
+            if banned_match:
+                retry_at_ms = int(banned_match.group(1))
+            elif "429" in message or "418" in message or '"code":-1003' in message or "Too many requests" in message:
+                retry_at_ms = int((time.time() + 120) * 1000)
+            if retry_at_ms:
+                with open(self._ban_cache_path(), 'w', encoding='utf-8') as handle:
+                    json.dump({"retry_at_ms": retry_at_ms, "updated_at": int(time.time())}, handle)
+        except Exception:
+            pass
+
+    def _clear_ban_cache(self):
+        try:
+            path = self._ban_cache_path()
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
     
     async def _can_open_position(self, symbol: str, side: str) -> bool:
         target_side = self._normalize_position_side(side)
         now = time.time()
         if symbol in self.signal_cooldowns:
-            if now - self.signal_cooldowns[symbol] < 300:
+            cooldown_seconds = ENTRY_RULES['signal_cooldown_minutes'] * 60
+            if now - self.signal_cooldowns[symbol] < cooldown_seconds:
                 return False
         active_count = len([p for p in self.positions.values() if p['size'] > 0])
         if active_count >= MAX_ACTIVE_SYMBOLS and symbol not in self.positions:
@@ -433,13 +439,17 @@ class WebSocketBot:
             ticker = await self.exchange.fetch_ticker(symbol)
             price = ticker['last']
             balance = await self._get_balance()
-            risk_amount = balance * RISK_PER_TRADE
+            risk_multiplier = float(signal.get('risk_multiplier', 1.0) or 1.0)
+            risk_amount = balance * RISK_PER_TRADE * risk_multiplier
             position_value = risk_amount * LEVERAGE
             quantity = position_value / price
             quantity = self._format_quantity(symbol, quantity)
-            
-            logger.info(f"[OPEN] {symbol} {side.upper()} @ {price:.4f}, 数量: {quantity}")
-            
+            if quantity <= 0:
+                logger.info(f"[OPEN] {symbol} skipped because formatted quantity is zero")
+                return
+
+            logger.info(f"[OPEN] {symbol} {side.upper()} @ {price:.4f}, qty: {quantity}, risk_mult: {risk_multiplier:.2f}")
+
             if self.dry_run:
                 self.positions[symbol] = {
                     'symbol': symbol,
@@ -457,13 +467,13 @@ class WebSocketBot:
                     side=self._order_side_from_position(position_side),
                     amount=quantity
                 )
-            
+
             self.signal_cooldowns[symbol] = time.time()
             if trade_recorder:
                 trade_recorder.record_entry(symbol, side, price, quantity, LEVERAGE, signal)
         except Exception as e:
-            logger.error(f"[OPEN] {symbol} 开仓失败: {e}")
-    
+            logger.error(f"[OPEN] {symbol} ????: {e}")
+
     async def _close_position(self, symbol: str, exit_data: dict):
         try:
             position = self.positions.get(symbol)
@@ -542,8 +552,8 @@ class WebSocketBot:
         return round(quantity, 3)
     
     async def watch_balance_and_positions(self):
-        """????????????????"""
-        logger.info("[WS] ?????????")
+        """通过用户数据流实时同步余额和持仓。"""
+        logger.info("[WS] 开始监听余额和持仓")
         balance_task = None
         position_task = None
         while self.running:
@@ -572,12 +582,23 @@ class WebSocketBot:
                     position_task = None
 
             except Exception as e:
-                logger.error(f"[WS-POSITION] ??????: {e}")
-                wait_seconds = self._parse_retry_after(e)
-                self.account_retry_after = time.time() + wait_seconds
+                self._cache_ban_from_error(e)
+                for task in (balance_task, position_task):
+                    if not task:
+                        continue
+                    if task.done():
+                        try:
+                            task.exception()
+                        except Exception:
+                            pass
+                    else:
+                        task.cancel()
                 balance_task = None
                 position_task = None
-                logger.warning(f"[WS-POSITION] ????????????? {wait_seconds:.0f}s")
+                logger.error(f"[WS-POSITION] 持仓监听错误: {e}")
+                wait_seconds = self._parse_retry_after(e)
+                self.account_retry_after = time.time() + wait_seconds
+                logger.warning(f"[WS-POSITION] 触发限频保护，暂停账户同步 {wait_seconds:.0f}s")
                 await asyncio.sleep(min(wait_seconds, 30))
 
     async def update_funding_rates(self):
@@ -592,6 +613,7 @@ class WebSocketBot:
                         pass
                 await asyncio.sleep(600)
             except Exception as e:
+                self._cache_ban_from_error(e)
                 logger.error(f"[FUNDING] 更新失败: {e}")
                 await asyncio.sleep(60)
     

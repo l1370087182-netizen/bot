@@ -5,6 +5,7 @@ Binance Bot Web Dashboard
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -47,6 +48,7 @@ LOG_FILE = os.path.join(BOT_DIR, "bot.log")
 BOT_SCRIPT = os.path.join(BOT_DIR, "bot.py")
 PID_FILE = os.path.join(BOT_DIR, "bot.pid")
 IP_CACHE_FILE = os.path.join(BOT_DIR, ".ip_cache")
+BAN_CACHE_FILE = os.path.join(BOT_DIR, ".binance_ban_cache.json")
 BINANCE_FAPI_BASE = "https://fapi.binance.com"
 TRACKED_SYMBOLS = SYMBOLS
 
@@ -65,6 +67,45 @@ def to_beijing_time(dt):
     if dt.tzinfo is None:
         dt = pytz.UTC.localize(dt)
     return dt.astimezone(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def load_ban_cache():
+    try:
+        if os.path.exists(BAN_CACHE_FILE):
+            with open(BAN_CACHE_FILE, "r", encoding="utf-8") as handle:
+                return json.load(handle)
+    except Exception:
+        pass
+    return {}
+
+
+def save_ban_cache(retry_at_ms):
+    try:
+        with open(BAN_CACHE_FILE, "w", encoding="utf-8") as handle:
+            json.dump({"retry_at_ms": int(retry_at_ms), "updated_at": int(time.time())}, handle)
+    except Exception:
+        pass
+
+
+def clear_ban_cache():
+    try:
+        if os.path.exists(BAN_CACHE_FILE):
+            os.remove(BAN_CACHE_FILE)
+    except Exception:
+        pass
+
+
+def get_ban_wait_seconds():
+    try:
+        data = load_ban_cache()
+        retry_at_ms = int(data.get("retry_at_ms", 0) or 0)
+        now_ms = int(time.time() * 1000)
+        if retry_at_ms <= now_ms:
+            clear_ban_cache()
+            return 0.0
+        return (retry_at_ms - now_ms) / 1000 + 2
+    except Exception:
+        return 0.0
 
 
 class BotManager:
@@ -160,6 +201,19 @@ class BotManager:
 
 class LogReader:
     @staticmethod
+    def _normalize_line(line):
+        cleaned = (line or "").replace("\ufeff", "").replace("\x00", "").strip()
+        if not cleaned:
+            return ""
+        try:
+            if "\\u" in cleaned or "\\U" in cleaned:
+                cleaned = cleaned.encode("utf-8").decode("unicode_escape")
+        except Exception:
+            pass
+        cleaned = cleaned.replace("\ufffd", "")
+        return cleaned
+
+    @staticmethod
     def _level_from_line(line):
         upper = line.upper()
         if "ERROR" in upper or "❌" in line:
@@ -181,7 +235,7 @@ class LogReader:
                 recent_logs = handle.readlines()[-lines:]
             parsed = []
             for raw_line in recent_logs:
-                line = raw_line.strip()
+                line = LogReader._normalize_line(raw_line)
                 if not line:
                     continue
                 parsed.append(
@@ -201,7 +255,7 @@ class LogReader:
             if not os.path.exists(LOG_FILE):
                 return []
             with open(LOG_FILE, "r", encoding="utf-8", errors="ignore") as handle:
-                matched = [line.strip() for line in handle.readlines() if keyword in line]
+                matched = [LogReader._normalize_line(line) for line in handle.readlines() if keyword in line]
             return matched[-lines:]
         except Exception as exc:
             return [f"日志搜索失败: {exc}"]
@@ -227,8 +281,8 @@ class WebDashboard:
     def __init__(self):
         self.strategy = Strategy(TRACKED_SYMBOLS)
         self.session = requests.Session()
-        self.snapshot_ttl = 1
-        self.snapshot_refresh_interval = 1
+        self.snapshot_ttl = 5
+        self.snapshot_refresh_interval = 5
         self.market_chart_ttl = 1800
         self.snapshot_cache = None
         self.snapshot_cache_time = 0.0
@@ -246,12 +300,25 @@ class WebDashboard:
         self.refresh_thread.start()
 
     def _request_binance(self, path, params=None):
+        ban_wait = get_ban_wait_seconds()
+        if ban_wait > 0:
+            raise RuntimeError(f"Binance API rate limited, retry in {ban_wait:.0f}s")
         response = self.session.get(
             f"{BINANCE_FAPI_BASE}{path}",
             params=params or {},
             timeout=5,
         )
+        if response.status_code == 418:
+            message = response.text
+            banned_match = re.search(r"banned until (\d{13})", message)
+            if banned_match:
+                save_ban_cache(int(banned_match.group(1)))
+            raise RuntimeError(message)
+        if response.status_code == 429:
+            save_ban_cache(int((time.time() + 120) * 1000))
+            raise RuntimeError(response.text)
         response.raise_for_status()
+        clear_ban_cache()
         return response.json()
 
     def _snapshot_refresh_loop(self):
@@ -951,9 +1018,21 @@ def get_current_ip():
 
 
 def check_binance_connection():
+    ban_wait = get_ban_wait_seconds()
+    if ban_wait > 0:
+        return "limited"
     try:
         proxies = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_ENABLED and PROXY_URL else None
         response = requests.get(f"{BINANCE_FAPI_BASE}/fapi/v1/ping", timeout=5, proxies=proxies)
+        if response.status_code == 418:
+            message = response.text
+            banned_match = re.search(r"banned until (\d{13})", message)
+            if banned_match:
+                save_ban_cache(int(banned_match.group(1)))
+            return "limited"
+        if response.status_code == 429:
+            save_ban_cache(int((time.time() + 120) * 1000))
+            return "limited"
         return "connected" if response.status_code == 200 else "error"
     except Exception:
         return "disconnected"

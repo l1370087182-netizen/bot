@@ -9,6 +9,7 @@ __pycache__/
 bot.pid
 bot.log
 trades.db
+.funding_cache/
 
 *.bak
 _tmp_dashboard_script.js

@@ -7,8 +7,10 @@ import sys
 # 添加 src 路径以导入 CVD 模块
 sys.path.insert(0, 'src')
 
-from config import (SYMBOLS, INDICATORS, CVD, EXIT_STRATEGY, PYRAMIDING, MAX_ACTIVE_SYMBOLS,
-                    SIGNAL_WEIGHTS, TIMEFRAMES, PRIMARY_TIMEFRAME, CONFIRM_TIMEFRAME, FUNDING)
+from config import (SYMBOLS, INDICATORS, CVD, ENTRY_RULES, EXIT_STRATEGY, PYRAMIDING,
+                    MAX_ACTIVE_SYMBOLS, SIGNAL_WEIGHTS, SIGNAL_QUALITY, TIMEFRAMES,
+                    PRIMARY_TIMEFRAME, CONFIRM_TIMEFRAME, FUNDING, MARKET_REGIME,
+                    SYMBOL_STRUCTURE_FILTER, get_signal_quality_for_symbol)
 
 try:
     from orderflow.cvd_analyzer import CVDFilter
@@ -190,6 +192,315 @@ class Strategy:
         
         return total_score
 
+    @staticmethod
+    def _has_recent_cross(df_closed, side, lookback):
+        window = df_closed[['stoch_k', 'stoch_d']].tail(lookback + 1)
+        if len(window) < 2:
+            return False
+
+        prev_k = window['stoch_k'].shift(1)
+        prev_d = window['stoch_d'].shift(1)
+        if side == 'buy':
+            cross_mask = (window['stoch_k'] > window['stoch_d']) & (prev_k <= prev_d)
+        else:
+            cross_mask = (window['stoch_k'] < window['stoch_d']) & (prev_k >= prev_d)
+        return bool(cross_mask.fillna(False).any())
+
+    @staticmethod
+    def _format_check_labels(checks):
+        return [label for label, ok in checks if not ok]
+
+    def get_signal_risk_multiplier(self, score, signal_side='buy', symbol=None):
+        side_key = 'long' if signal_side == 'buy' else 'short'
+        quality = get_signal_quality_for_symbol(symbol)
+        if not quality.get(f'enable_{side_key}', True):
+            return 0.0
+        full_score = quality.get(f'{side_key}_full_risk_score', quality['full_risk_score'])
+        min_score = quality.get(f'{side_key}_min_score', quality['min_score'])
+        reduced_risk = quality.get(f'{side_key}_reduced_risk_multiplier', quality['reduced_risk_multiplier'])
+        if score >= full_score:
+            return 1.0
+        if score >= min_score:
+            return float(reduced_risk)
+        return 0.0
+
+    @staticmethod
+    def _trend_efficiency(close_series: pd.Series, lookback: int) -> float:
+        if close_series is None or len(close_series) <= lookback:
+            return 0.0
+        recent = close_series.tail(lookback + 1)
+        path = recent.diff().abs().sum()
+        if pd.isna(path) or path <= 0:
+            return 0.0
+        net = abs(recent.iloc[-1] - recent.iloc[0])
+        return float(net / path)
+
+    def evaluate_symbol_structure(self, df_confirm):
+        structure = {
+            'ok': True,
+            'quote_volume_med': 0.0,
+            'body_efficiency_med': 0.0,
+            'di_dominance_med': 0.0,
+            'ema_gap_med': 0.0,
+            'atr_pct_med': 0.0,
+            'trend_efficiency': 0.0,
+        }
+        if not SYMBOL_STRUCTURE_FILTER.get('enabled', False):
+            return structure
+        if df_confirm is None or len(df_confirm) < 2:
+            structure['ok'] = False
+            return structure
+
+        confirm_df = df_confirm.copy()
+        volume_window = int(SYMBOL_STRUCTURE_FILTER.get('volume_window', 24))
+        quality_window = int(SYMBOL_STRUCTURE_FILTER.get('quality_window', 10))
+        trend_lookback = int(SYMBOL_STRUCTURE_FILTER.get('trend_lookback', 12))
+        min_bars = max(volume_window, quality_window, trend_lookback + 1)
+        if len(confirm_df) < min_bars:
+            structure['ok'] = False
+            return structure
+
+        quote_volume = confirm_df['close'] * confirm_df['volume']
+        candle_range = (confirm_df['high'] - confirm_df['low']).replace(0, np.nan)
+        body_efficiency = ((confirm_df['close'] - confirm_df['open']).abs() / candle_range).clip(0, 1)
+        di_dominance = (
+            (confirm_df['plus_di'] - confirm_df['minus_di']).abs()
+            / (confirm_df['plus_di'] + confirm_df['minus_di']).replace(0, np.nan)
+        ).clip(lower=0)
+        ema_gap = (
+            (confirm_df['close'] - confirm_df['ema200']).abs()
+            / confirm_df['ema200'].replace(0, np.nan)
+        ).clip(lower=0)
+        atr_pct = (confirm_df['atr'] / confirm_df['close']).clip(lower=0)
+
+        structure['quote_volume_med'] = float(quote_volume.tail(volume_window).median())
+        structure['body_efficiency_med'] = float(body_efficiency.tail(quality_window).median())
+        structure['di_dominance_med'] = float(di_dominance.tail(quality_window).median())
+        structure['ema_gap_med'] = float(ema_gap.tail(quality_window).median())
+        structure['atr_pct_med'] = float(atr_pct.tail(quality_window).median())
+        structure['trend_efficiency'] = self._trend_efficiency(confirm_df['close'], trend_lookback)
+
+        checks = [
+            structure['quote_volume_med'] >= SYMBOL_STRUCTURE_FILTER.get('min_quote_volume', 0.0),
+            structure['body_efficiency_med'] >= SYMBOL_STRUCTURE_FILTER.get('min_body_efficiency', 0.0),
+            structure['di_dominance_med'] >= SYMBOL_STRUCTURE_FILTER.get('min_di_dominance', 0.0),
+            structure['ema_gap_med'] >= SYMBOL_STRUCTURE_FILTER.get('min_ema_gap_pct', 0.0),
+            structure['atr_pct_med'] >= SYMBOL_STRUCTURE_FILTER.get('min_atr_pct', 0.0),
+            structure['trend_efficiency'] >= SYMBOL_STRUCTURE_FILTER.get('min_trend_efficiency', 0.0),
+        ]
+        structure['ok'] = bool(all(pd.notna(x) for x in structure.values() if isinstance(x, float)) and all(checks))
+        return structure
+
+    def evaluate_market_regime(self, market_confirm_df):
+        regime = {
+            'allow_long': True,
+            'allow_short': True,
+            'label': 'neutral',
+        }
+        if not MARKET_REGIME.get('enabled', False):
+            return regime
+        if market_confirm_df is None or len(market_confirm_df) < 1:
+            return regime
+
+        last_market = market_confirm_df.iloc[-1]
+        adx_ok = last_market['adx'] >= MARKET_REGIME.get('adx_threshold', 20)
+        bullish = bool(
+            adx_ok
+            and last_market['close'] > last_market['ema200']
+            and last_market['plus_di'] > last_market['minus_di']
+        )
+        bearish = bool(
+            adx_ok
+            and last_market['close'] < last_market['ema200']
+            and last_market['minus_di'] > last_market['plus_di']
+        )
+        regime['label'] = 'bullish' if bullish else 'bearish' if bearish else 'neutral'
+        if MARKET_REGIME.get('short_requires_bearish_regime', True):
+            regime['allow_short'] = bearish
+        return regime
+
+    def evaluate_multitimeframe_confirm(self, df_primary, df_confirm, signal_side):
+        if df_primary is None or df_confirm is None or len(df_primary) < 2 or len(df_confirm) < 1:
+            return False
+
+        last_primary = df_primary.iloc[-2] if len(df_primary) >= 2 else df_primary.iloc[-1]
+        last_confirm = df_confirm.iloc[-1]
+        confirm_trend_up = last_confirm['plus_di'] > last_confirm['minus_di']
+        confirm_price_above_ema = last_confirm['close'] > last_confirm['ema200']
+        confirm_price_below_ema = last_confirm['close'] < last_confirm['ema200']
+        soft_ratio = ENTRY_RULES['soft_confirm_di_ratio']
+        primary_recover_long = (
+            last_primary['stoch_k'] >= last_primary['stoch_d']
+            or last_primary['plus_di'] >= last_primary['minus_di'] * soft_ratio
+        )
+        primary_recover_short = (
+            last_primary['stoch_k'] <= last_primary['stoch_d']
+            or last_primary['minus_di'] >= last_primary['plus_di'] * soft_ratio
+        )
+
+        if signal_side == 'buy':
+            if last_confirm['adx'] < ENTRY_RULES.get('confirm_long_adx_threshold', 20):
+                return False
+            if ENTRY_RULES.get('require_confirm_ema_alignment', True) and not confirm_price_above_ema:
+                return False
+            return bool(confirm_trend_up and primary_recover_long)
+
+        if last_confirm['adx'] < ENTRY_RULES.get('confirm_short_adx_threshold', 25):
+            return False
+        if ENTRY_RULES.get('require_confirm_ema_alignment', True) and not confirm_price_below_ema:
+            return False
+        return bool((not confirm_trend_up) and primary_recover_short)
+
+    def evaluate_signal_setup(self, df_primary, df_confirm, funding_rate=0.0, cvd_strength=50.0, market_confirm_df=None, symbol=None):
+        min_primary_bars = max(ENTRY_RULES['stoch_lookback'] + 3, 20)
+        if df_primary is None or df_confirm is None or len(df_primary) < min_primary_bars or len(df_confirm) < 1:
+            return None
+
+        curr = df_primary.iloc[-1]
+        last_closed = df_primary.iloc[-2]
+        prev_closed = df_primary.iloc[-3]
+        closed_df = df_primary.iloc[:-1]
+        if len(closed_df) < max(ENTRY_RULES['stoch_lookback'], 20):
+            return None
+
+        recent_stoch = closed_df.tail(ENTRY_RULES['stoch_lookback'])
+        ema_buffer = ENTRY_RULES['ema_buffer_pct']
+        atr_avg = closed_df['atr'].tail(100).mean()
+        vol_ok = bool(
+            pd.notna(atr_avg)
+            and atr_avg > 0
+            and last_closed['atr'] > atr_avg * 0.3
+            and last_closed['atr'] < atr_avg * 4
+        )
+        adx_threshold = INDICATORS['adx']['threshold']
+        adx_ok = bool(curr['adx'] > adx_threshold)
+
+        recent_oversold = bool(recent_stoch['stoch_k'].min() < INDICATORS['stoch_rsi']['oversold'])
+        recent_overbought = bool(recent_stoch['stoch_k'].max() > INDICATORS['stoch_rsi']['overbought'])
+        long_ema_ok = bool(last_closed['close'] > last_closed['ema200'] * (1 - ema_buffer))
+        short_ema_ok = bool(last_closed['close'] < last_closed['ema200'] * (1 + ema_buffer))
+        confirm_buffer = ENTRY_RULES.get('price_confirm_buffer_pct', 0.0)
+        confirm_use_close = ENTRY_RULES.get('price_confirm_use_close', True)
+        long_confirm_price = curr['close'] if confirm_use_close else curr['high']
+        short_confirm_price = curr['close'] if confirm_use_close else curr['low']
+        long_trigger = bool(
+            last_closed['stoch_k'] <= ENTRY_RULES['long_trigger_k_max']
+            and last_closed['stoch_k'] > prev_closed['stoch_k']
+            and last_closed['close'] > prev_closed['close']
+        )
+        recent_short_window = closed_df.tail(ENTRY_RULES.get('short_rally_lookback', 4))
+        recent_rally_to_ema = bool(
+            len(recent_short_window) > 0
+            and recent_short_window['high'].max() >= last_closed['ema200'] * (1 - ema_buffer)
+        )
+        bearish_rejection = bool(
+            last_closed['close'] < last_closed['open']
+            and last_closed['close'] < prev_closed['close']
+            and last_closed['close'] <= (last_closed['high'] + last_closed['low']) / 2
+        )
+        short_stoch_weak = bool(
+            last_closed['stoch_k'] >= ENTRY_RULES['short_trigger_k_min']
+            and last_closed['stoch_k'] < prev_closed['stoch_k']
+        )
+        short_trigger = bool(
+            recent_rally_to_ema
+            and bearish_rejection
+            and short_stoch_weak
+        )
+        long_price_confirm = bool(
+            (not ENTRY_RULES.get('price_confirm_enabled', False))
+            or long_confirm_price >= last_closed['high'] * (1 + confirm_buffer)
+        )
+        short_price_confirm = bool(
+            (not ENTRY_RULES.get('price_confirm_enabled', False))
+            or short_confirm_price <= last_closed['low'] * (1 - confirm_buffer)
+        )
+
+        long_confirm = self.evaluate_multitimeframe_confirm(df_primary, df_confirm, 'buy')
+        short_confirm = self.evaluate_multitimeframe_confirm(df_primary, df_confirm, 'sell')
+
+        long_score = float(self.calculate_signal_score(curr['adx'], last_closed['stoch_k'], cvd_strength, funding_rate, 'buy'))
+        short_score = float(self.calculate_signal_score(curr['adx'], last_closed['stoch_k'], cvd_strength, funding_rate, 'sell'))
+        market_regime = self.evaluate_market_regime(market_confirm_df)
+        structure_state = self.evaluate_symbol_structure(df_confirm)
+        structure_ok = structure_state.get('ok', True)
+        long_structure_ok = structure_ok if SYMBOL_STRUCTURE_FILTER.get('apply_to_long', True) else True
+        short_structure_ok = structure_ok if SYMBOL_STRUCTURE_FILTER.get('apply_to_short', False) else True
+        quality = get_signal_quality_for_symbol(symbol)
+        long_enabled = quality.get('enable_long', True)
+        short_enabled = quality.get('enable_short', True) and market_regime.get('allow_short', True)
+        long_min_score = quality.get('long_min_score', quality['min_score'])
+        short_min_score = quality.get('short_min_score', quality['min_score'])
+
+        long_checks = [
+            ('volatility_filter', vol_ok),
+            (f'adx_above_{adx_threshold}', adx_ok),
+            (f'recent_oversold_{ENTRY_RULES["stoch_lookback"]}', recent_oversold),
+            ('ema200_long_buffer', long_ema_ok),
+            ('symbol_structure_long_ok', long_structure_ok),
+            (f'pullback_rebound_k_lte_{ENTRY_RULES["long_trigger_k_max"]}', long_trigger),
+            ('price_confirm_long', long_price_confirm),
+            ('trend_confirm_1h', long_confirm),
+            (f'long_enabled', long_enabled),
+            (f'score_gte_{long_min_score:.0f}', long_score >= long_min_score),
+        ]
+        short_checks = [
+            ('volatility_filter', vol_ok),
+            (f'adx_above_{adx_threshold}', adx_ok),
+            (f'recent_overbought_{ENTRY_RULES["stoch_lookback"]}', recent_overbought),
+            ('ema200_short_buffer', short_ema_ok),
+            ('symbol_structure_short_ok', short_structure_ok),
+            (f'rally_into_ema_{ENTRY_RULES["short_rally_lookback"]}', recent_rally_to_ema),
+            ('bearish_rejection_candle', bearish_rejection),
+            (f'short_k_weak_gte_{ENTRY_RULES["short_trigger_k_min"]}', short_stoch_weak),
+            ('price_confirm_short', short_price_confirm),
+            ('trend_confirm_1h', short_confirm),
+            ('market_regime_short_ok', market_regime.get('allow_short', True)),
+            (f'short_enabled', short_enabled),
+            (f'score_gte_{short_min_score:.0f}', short_score >= short_min_score),
+        ]
+
+        long_ready = all(ok for _, ok in long_checks)
+        short_ready = all(ok for _, ok in short_checks)
+        signal = None
+        if long_ready or short_ready:
+            if short_ready and ((not long_ready) or short_score > long_score):
+                signal = {
+                    'side': 'sell',
+                    'score': short_score,
+                    'adx': curr['adx'],
+                    'stoch': last_closed['stoch_k'],
+                    'funding': funding_rate,
+                    'risk_multiplier': self.get_signal_risk_multiplier(short_score, 'sell', symbol=symbol),
+                }
+            else:
+                signal = {
+                    'side': 'buy',
+                    'score': long_score,
+                    'adx': curr['adx'],
+                    'stoch': last_closed['stoch_k'],
+                    'funding': funding_rate,
+                    'risk_multiplier': self.get_signal_risk_multiplier(long_score, 'buy', symbol=symbol),
+                }
+
+        return {
+            'curr': curr,
+            'last_closed': last_closed,
+            'long_checks': long_checks,
+            'short_checks': short_checks,
+            'long_score': long_score,
+            'short_score': short_score,
+            'signal': signal,
+            'structure': structure_state,
+            'quality_profile': quality,
+            'price_confirmation': {
+                'long_ok': long_price_confirm,
+                'short_ok': short_price_confirm,
+                'buffer_pct': confirm_buffer,
+                'use_close': confirm_use_close,
+            },
+        }
+
     async def get_funding_rate(self, exchange, symbol):
         """获取资金费率"""
         try:
@@ -200,54 +511,29 @@ class Strategy:
 
     async def check_multitimeframe_confirm(self, exchange, symbol, signal_side, df_primary=None, df_confirm=None):
         """
-        多时间框架确认 - 放宽优化版
-        15m信号 + 1h趋势一致时才开仓
-        1h趋势判断使用ADX方向（1h ADX > 20 且方向与15m一致）
+        ????????1h ????????15m ??????????
         """
-        from config import TIMEFRAMES, PRIMARY_TIMEFRAME, CONFIRM_TIMEFRAME
-        
+        from config import PRIMARY_TIMEFRAME, CONFIRM_TIMEFRAME
+
         try:
             if df_primary is None:
                 ohlcv_primary = await exchange.fetch_ohlcv(symbol, timeframe=PRIMARY_TIMEFRAME, limit=100)
                 df_primary = self.calculate_indicators(pd.DataFrame(ohlcv_primary, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']))
-            
+
             if df_confirm is None:
                 ohlcv_confirm = await exchange.fetch_ohlcv(symbol, timeframe=CONFIRM_TIMEFRAME, limit=100)
                 df_confirm = self.calculate_indicators(pd.DataFrame(ohlcv_confirm, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']))
-            
-            last_primary = df_primary.iloc[-1]
-            last_confirm = df_confirm.iloc[-1]
-            
-            # 1h ADX 阈值检查 (>20)
-            adx_1h_threshold = 20
-            if last_confirm['adx'] < adx_1h_threshold:
-                logging.info(f"❌ {symbol} 1h确认: ADX {last_confirm['adx']:.1f} < {adx_1h_threshold} (趋势不够强)")
-                return False
-            
-            # 使用 ADX 方向判断趋势 (+DI > -DI 为多头，反之空头)
-            primary_trend_up = last_primary['plus_di'] > last_primary['minus_di']
-            confirm_trend_up = last_confirm['plus_di'] > last_confirm['minus_di']
-            
-            # 检查趋势一致性
-            if signal_side == 'buy':
-                # 做多需要两个时间框架都是多头趋势
-                is_aligned = primary_trend_up and confirm_trend_up
-                if not is_aligned:
-                    logging.info(f"❌ {symbol} 1h确认: 方向不一致 | 15m:+DI{'>' if primary_trend_up else '<'}-DI | 1h:+DI{'>' if confirm_trend_up else '<'}-DI (需要都是多头)")
-            else:
-                # 做空需要两个时间框架都是空头趋势
-                is_aligned = (not primary_trend_up) and (not confirm_trend_up)
-                if not is_aligned:
-                    logging.info(f"❌ {symbol} 1h确认: 方向不一致 | 15m:+DI{'<' if not primary_trend_up else '>'}-DI | 1h:+DI{'<' if not confirm_trend_up else '>'}-DI (需要都是空头)")
-            
+
+            is_aligned = self.evaluate_multitimeframe_confirm(df_primary, df_confirm, signal_side)
             if is_aligned:
-                logging.info(f"✅ {symbol} 1h确认通过: ADX {last_confirm['adx']:.1f} | 15m+1h方向一致")
-            
+                logging.info(f"[CONFIRM] {symbol} {signal_side} ???1h?????15m????")
+            else:
+                logging.info(f"[CONFIRM] {symbol} {signal_side} ???1h??????15m????")
             return is_aligned
-            
+
         except Exception as e:
-            logging.warning(f"多时间框架确认失败 {symbol}: {e}")
-            return True  # 失败时默认通过
+            logging.warning(f"?????????: {symbol}: {e}")
+            return True
 
     async def calculate_signals(self, exchange):
         """

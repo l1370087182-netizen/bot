@@ -25,7 +25,7 @@ SYMBOLS = [
 ]
 
 # 信号强度排名：只对前N个币种开仓
-MAX_ACTIVE_SYMBOLS = 4
+MAX_ACTIVE_SYMBOLS = 2
 
 # =============================================================================
 # Signal Scoring Weights (信号强度权重)
@@ -37,6 +37,104 @@ SIGNAL_WEIGHTS = {
     'cvd': 0.3,
     'funding': 0.1
 }
+
+ENTRY_RULES = {
+    'stoch_lookback': 5,
+    'ema_buffer_pct': 0.005,
+    'soft_confirm_di_ratio': 0.9,
+    'confirm_long_adx_threshold': 20,
+    'confirm_short_adx_threshold': 30,
+    'require_confirm_ema_alignment': True,
+    'price_confirm_enabled': True,
+    'price_confirm_use_close': False,
+    'price_confirm_buffer_pct': 0.0005,
+    'long_trigger_k_max': 40,
+    'short_trigger_k_min': 58,
+    'short_rally_lookback': 4,
+    'signal_cooldown_minutes': 540,
+}
+
+SIGNAL_QUALITY = {
+    'min_score': 88.0,
+    'full_risk_score': 94.0,
+    'reduced_risk_multiplier': 0.15,
+    'enable_long': True,
+    'enable_short': True,
+    'long_min_score': 92.0,
+    'long_full_risk_score': 96.0,
+    'long_reduced_risk_multiplier': 0.10,
+    'short_min_score': 99.0,
+    'short_full_risk_score': 100.0,
+    'short_reduced_risk_multiplier': 0.02,
+}
+
+# =============================================================================
+# Symbol Signal Profiles (币种分层门槛)
+# 目的：不直接删币，而是对样本外持续拖累的一侧提高门槛
+# 2026-03-25 当前结论：
+# - DOGE / ADA / ETH 主要是做多拖累
+# - SOL 主要是做空拖累
+# =============================================================================
+SYMBOL_SIGNAL_PROFILES = {
+    'BTCUSDT': {
+        'long_min_score': 90.0,
+        'long_full_risk_score': 95.0,
+        'long_reduced_risk_multiplier': 0.18,
+    },
+    'SUIUSDT': {
+        'long_min_score': 90.0,
+        'long_full_risk_score': 95.0,
+        'long_reduced_risk_multiplier': 0.18,
+    },
+    'AVAXUSDT': {
+        'long_min_score': 90.0,
+        'long_full_risk_score': 95.0,
+        'long_reduced_risk_multiplier': 0.18,
+    },
+    'XRPUSDT': {
+        'long_min_score': 91.0,
+        'long_full_risk_score': 95.0,
+        'long_reduced_risk_multiplier': 0.15,
+    },
+    'DOGEUSDT': {
+        'enable_long': False,
+        'long_min_score': 96.0,
+        'long_full_risk_score': 99.0,
+        'long_reduced_risk_multiplier': 0.05,
+    },
+    'ADAUSDT': {
+        'enable_long': False,
+        'long_min_score': 96.0,
+        'long_full_risk_score': 99.0,
+        'long_reduced_risk_multiplier': 0.05,
+    },
+    'ETHUSDT': {
+        'enable_long': False,
+        'long_min_score': 95.0,
+        'long_full_risk_score': 98.0,
+        'long_reduced_risk_multiplier': 0.05,
+    },
+    'SOLUSDT': {
+        'enable_short': False,
+        'short_min_score': 100.0,
+        'short_full_risk_score': 100.0,
+        'short_reduced_risk_multiplier': 0.0,
+    },
+}
+
+
+def normalize_symbol_key(symbol: str) -> str:
+    if not symbol:
+        return ''
+    return symbol.replace('/USDT:USDT', 'USDT').replace('/', '').replace(':', '').upper()
+
+
+def get_signal_quality_for_symbol(symbol: str | None = None) -> dict:
+    quality = dict(SIGNAL_QUALITY)
+    symbol_key = normalize_symbol_key(symbol) if symbol else ''
+    if symbol_key:
+        quality.update(SYMBOL_SIGNAL_PROFILES.get(symbol_key, {}))
+    return quality
 
 # =============================================================================
 # Multi-Timeframe Settings (多时间框架)
@@ -76,17 +174,17 @@ ATR_STOP_MAX = 2.8          # 最大2.8x
 # =============================================================================
 BREAKEVEN = {
     'enabled': True,
-    'trigger_r': 1.0,  # 盈利达到1R时触发
+    'trigger_r': 1.2,  # 盈利达到1.2R时提前保本，减少回撤并提升胜率
     'buffer_pct': 0.005  # 保本价+0.5%缓冲
 }
 
 # =============================================================================
 # Exit Strategy - R-based
 # =============================================================================
-RR_2R_CLOSE_PCT = 0.20
+RR_2R_CLOSE_PCT = 0.25
 RR_3R_CLOSE_PCT = 0.50
-RR_2R_MULTIPLE = 2.5
-RR_3R_MULTIPLE = 3.5
+RR_2R_MULTIPLE = 2.0
+RR_3R_MULTIPLE = 3.0
 
 EXIT_STRATEGY = {
     'enabled': True,
@@ -172,6 +270,36 @@ FUNDING = {
     'weight_impact': 10,   # 10%权重
     'prefer_short_when_positive': True,   # >0.01%优先做空
     'prefer_long_when_negative': True     # <-0.01%优先做多
+}
+
+# =============================================================================
+# Market Regime Filter (市场环境过滤)
+# =============================================================================
+MARKET_REGIME = {
+    'enabled': True,
+    'leader_symbol': 'BTCUSDT',
+    'short_requires_bearish_regime': True,
+    'adx_threshold': 20,
+}
+
+# =============================================================================
+# Symbol Structure Filter (币种结构过滤)
+# 目的：过滤高噪音、低效率的时段，而不是按历史盈亏直接拉黑币种
+# 基于 1h 结构特征：成交额、实体效率、DI 主导度、EMA 偏离、ATR 占比、趋势效率
+# =============================================================================
+SYMBOL_STRUCTURE_FILTER = {
+    'enabled': True,
+    'apply_to_long': True,
+    'apply_to_short': False,
+    'volume_window': 24,            # 1h 成交额滚动中位数窗口
+    'quality_window': 8,            # 1h 结构质量滚动中位数窗口
+    'trend_lookback': 12,           # 1h 趋势效率观察长度
+    'min_quote_volume': 3_000_000,  # 最近结构期最小成交额中位数
+    'min_body_efficiency': 0.38,    # K线实体效率下限
+    'min_di_dominance': 0.53,       # DI 主导度下限
+    'min_ema_gap_pct': 0.025,       # 与 EMA200 的最小有效偏离
+    'min_atr_pct': 0.007,           # ATR / Price 下限
+    'min_trend_efficiency': 0.24,   # 趋势效率下限
 }
 
 # =============================================================================
