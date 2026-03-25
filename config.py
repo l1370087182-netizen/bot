@@ -8,11 +8,16 @@ load_dotenv()
 # =============================================================================
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
 BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET')
+BINANCE_TESTNET_API_KEY = os.getenv('BINANCE_TESTNET_API_KEY')
+BINANCE_TESTNET_API_SECRET = os.getenv('BINANCE_TESTNET_API_SECRET')
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '8622569590:AAHmgZHIqP1L50_9mXXch7-jKJ5jz5b_LMI')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '6555213810')
 
 if not BINANCE_API_KEY or not BINANCE_API_SECRET:
     raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET must be set in .env file")
+
+if not BINANCE_TESTNET_API_KEY or not BINANCE_TESTNET_API_SECRET:
+    raise ValueError("BINANCE_TESTNET_API_KEY and BINANCE_TESTNET_API_SECRET must be set in .env file")
 
 # =============================================================================
 # Trading Symbols - 10大主流币
@@ -205,6 +210,15 @@ EXIT_STRATEGY = {
 STOP_LOSS_PCT = 0.02        # 保留但不再使用，改用ATR动态止损
 TAKE_PROFIT_PCT = 0.06
 SLIPPAGE_PROTECTION = 0.001
+
+PAPER_TRADING = {
+    'starting_balance': 1000.0,
+    'taker_fee_rate': 0.00045,
+    'slippage_pct': SLIPPAGE_PROTECTION,
+    'status_interval_seconds': 5,
+    'equity_snapshot_interval_seconds': 60,
+    'funding_period_seconds': 28800,
+}
 
 # =============================================================================
 # Pyramiding - R-based

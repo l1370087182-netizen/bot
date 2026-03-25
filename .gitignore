@@ -10,6 +10,10 @@ bot.pid
 bot.log
 trades.db
 .funding_cache/
+paper_runs/
+testnet_runs/
+live_run_status.json
+.binance_ban_cache.json
 
 *.bak
 _tmp_dashboard_script.js

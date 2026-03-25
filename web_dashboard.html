@@ -71,6 +71,22 @@
         .btn:hover { transform: translateY(-1px); background: rgba(34, 47, 88, 0.95); }
         .btn.success { background: rgba(0, 208, 132, 0.16); }
         .btn.danger { background: rgba(255, 95, 109, 0.16); }
+        .mode-switch {
+            display: inline-flex;
+            gap: 8px;
+            padding: 4px;
+            border-radius: 999px;
+            border: 1px solid var(--line);
+            background: rgba(20, 28, 54, 0.85);
+        }
+        .mode-btn {
+            min-width: 136px;
+        }
+        .mode-btn.active {
+            background: rgba(77, 163, 255, 0.22);
+            border-color: rgba(77, 163, 255, 0.5);
+            box-shadow: inset 0 0 0 1px rgba(77, 163, 255, 0.24);
+        }
         .dot {
             width: 10px;
             height: 10px;
@@ -288,6 +304,14 @@
             background: rgba(9, 13, 27, 0.92);
             padding: 16px;
         }
+        .logs-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
         .logs {
             max-height: 460px;
             overflow-y: auto;
@@ -298,6 +322,23 @@
         .log-row {
             padding: 6px 0;
             border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .log-separator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 10px 0 6px;
+            color: #f4c84d;
+            font-size: 11px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        .log-separator::before,
+        .log-separator::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: linear-gradient(90deg, rgba(244,200,77,0.08), rgba(244,200,77,0.85), rgba(244,200,77,0.08));
         }
         .log-time {
             color: var(--muted);
@@ -334,17 +375,28 @@
 
         <div class="status-bar">
             <div class="pill"><span class="dot" id="botStatusDot"></span><span id="botStatus">检查中</span></div>
-            <div class="pill">💵 余额 <strong id="balance">--</strong> USDT</div>
+            <div class="pill">🧭 模式 <strong id="botModeLabel">--</strong></div>
+            <div class="pill">💵 <span id="balanceLabel">余额</span> <strong id="balance">--</strong> USDT</div>
             <div class="pill">🧾 持仓 <strong id="positionCount">--</strong></div>
             <div class="pill" id="beijingTime">🕒 --</div>
         </div>
 
         <div class="toolbar">
+            <div class="mode-switch" id="botModeSwitch">
+                <button class="btn mode-btn" id="modeBtnTestnet" type="button" onclick="switchModeFromSelector('testnet')">Binance Testnet</button>
+                <button class="btn mode-btn" id="modeBtnReal" type="button" onclick="switchModeFromSelector('real')">实盘</button>
+            </div>
             <button class="btn success" onclick="startBot()">▶ 启动机器人</button>
             <button class="btn danger" onclick="stopBot()">■ 停止机器人</button>
             <button class="btn" onclick="restartBot()">↻ 重启机器人</button>
+            <button class="btn" onclick="exportPaperRun()">⬇ 导出测试盘周报</button>
             <button class="btn" onclick="refreshData()">⟳ 立即刷新</button>
             <button class="btn" onclick="checkIP()">🌐 检查出口 IP</button>
+        </div>
+
+        <div class="card" style="margin-bottom:18px;">
+            <div class="metric-sub">当前运行数据文件: <strong id="runDataFile">--</strong></div>
+            <div class="metric-sub" style="margin-top:6px;">最近导出文件: <strong id="exportedReportFile">--</strong></div>
         </div>
 
         <div class="card" id="ipPanel" style="display:none; margin-bottom:18px;">
@@ -427,7 +479,13 @@
         <div class="scan-grid" id="scanDiagnostics"></div>
 
         <div class="logs-wrap">
-            <div class="section-title">🧾 实时日志</div>
+            <div class="logs-toolbar">
+                <div class="section-title" style="margin:0;">🧾 实时日志</div>
+                <label class="tiny" style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                    <input type="checkbox" id="autoScrollToggle" checked>
+                    自滚动
+                </label>
+            </div>
             <div class="logs" id="logs"></div>
         </div>
 
@@ -442,6 +500,7 @@
         let lastLogHash = '';
         let rankingEventSource = null;
         let readyOnly = false;
+        let autoScrollLogs = true;
         let latestRankingPayload = null;
         let latestScanRows = [];
         let lastScanSignature = '';
@@ -449,16 +508,44 @@
         let isFetchingSummary = false;
         let isFetchingPrediction = false;
         let isFetchingLogs = false;
+        let latestRuntimeMode = 'testnet';
+        let latestRuntimeRunning = false;
+        let modeSelectionDirty = false;
+        let selectedMode = 'testnet';
+        const maxLogRows = 100;
+        let lastLogRefreshLabel = '';
 
         function formatSigned(value, digits = 2, suffix = '') {
             const num = Number(value || 0);
             return `${num >= 0 ? '+' : ''}${num.toFixed(digits)}${suffix}`;
         }
 
+        function getModeLabel(mode) {
+            if (mode === 'testnet') return 'Binance Testnet';
+            if (mode === 'real') return '\u5b9e\u76d8';
+            if (mode === 'paper') return '\u672c\u5730\u6a21\u62df\u76d8';
+            return '\u672a\u77e5\u6a21\u5f0f';
+        }
+
+        function getMarketConditionEmoji(condition) {
+            if (!condition || condition === '\u672a\u77e5') return '\u{1F7E1}';
+            if (condition.includes('\u591A') || condition.includes('\u5F3A')) return '\u{1F7E2}';
+            if (condition.includes('\u7A7A') || condition.includes('\u5F31')) return '\u{1F53B}';
+            return '\u{1F7E1}';
+        }
+
+        function renderModeButtons() {
+            const testnetBtn = document.getElementById('modeBtnTestnet');
+            const realBtn = document.getElementById('modeBtnReal');
+            if (!testnetBtn || !realBtn) return;
+            testnetBtn.classList.toggle('active', selectedMode === 'testnet');
+            realBtn.classList.toggle('active', selectedMode === 'real');
+        }
+
         function updateBeijingTime() {
-            const now = new Date();
-            const beijing = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
-            document.getElementById('beijingTime').textContent = `🕒 ${beijing.toLocaleString('zh-CN')}`;
+            const beijingText = new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+            document.getElementById('beijingTime').textContent = `\u{1F552} \u5317\u4EAC\u65F6\u95F4 ${beijingText}`;
+            document.getElementById('serverTime').textContent = `\u670D\u52A1\u5668\u65F6\u95F4: ${beijingText}`;
         }
 
         function renderRankingItems(elementId, rows, type) {
@@ -466,16 +553,14 @@
             const cachedRows = latestRankingPayload
                 ? (type === 'long' ? (latestRankingPayload.long_rankings || []) : (latestRankingPayload.short_rankings || []))
                 : [];
-            if ((!rows || !rows.length) && cachedRows.length) {
-                rows = cachedRows;
-            }
-            const filteredRows = (readyOnly ? rows.filter(row => row.ready) : rows).slice(0, 5);
+            const sourceRows = rows && rows.length ? rows : cachedRows;
+            const filteredRows = (readyOnly ? sourceRows.filter(row => row.ready) : sourceRows).slice(0, 5);
             const existingItems = new Map(
                 Array.from(container.querySelectorAll('.ranking-item[data-symbol]')).map(item => [item.dataset.symbol, item])
             );
 
             if (!filteredRows.length) {
-                container.innerHTML = `<div class="metric-sub">暂无${type === 'long' ? '做多' : '做空'}评分数据</div>`;
+                container.innerHTML = `<div class="metric-sub">\u6682\u65E0${type === 'long' ? '\u505A\u591A' : '\u505A\u7A7A'}\u8BC4\u5206\u6570\u636E</div>`;
                 return;
             }
 
@@ -499,41 +584,44 @@
                     container.appendChild(item);
                 }
 
+                const sideEmoji = row.ready ? '\u2705' : (type === 'long' ? '\u{1F680}' : '\u{1F53B}');
+                const failedReasons = row.failed_reasons || [];
+
                 item.classList.toggle('ready-candidate', !!row.ready);
                 item.querySelector('.rank-badge').textContent = `#${index + 1}`;
-                item.querySelector('.rank-symbol').textContent = `${row.ready ? '🔥' : '🧭'} ${row.symbol}`;
-                item.querySelector('.rank-meta').textContent = `${formatSigned(row.change_24h, 2, '%')} · Funding ${formatSigned(row.funding, 4, '%')}`;
-                item.querySelector('.rank-adx').textContent = Number(row.adx).toFixed(1);
-                item.querySelector('.rank-stoch').textContent = Number(row.stoch).toFixed(1);
-                item.querySelector('.rank-score').textContent = Number(row.score).toFixed(1);
+                item.querySelector('.rank-symbol').textContent = `${sideEmoji} ${row.symbol}`;
+                item.querySelector('.rank-meta').textContent =
+                    `${formatSigned(row.change_24h, 2, '%')} | Funding ${formatSigned(row.funding, 4, '%')}`;
+                item.querySelector('.rank-adx').textContent = Number(row.adx || 0).toFixed(1);
+                item.querySelector('.rank-stoch').textContent = Number(row.stoch || 0).toFixed(1);
+                item.querySelector('.rank-score').textContent = Number(row.score || 0).toFixed(1);
                 item.querySelector('.rank-reasons').textContent = row.ready
-                    ? '✅ 该币种当前已满足这一侧开仓条件'
-                    : ((row.failed_reasons || []).length ? `未满足原因：${row.failed_reasons.join(' ｜ ')}` : '暂无未满足原因');
+                    ? '\u5DF2\u6EE1\u8DB3\u5F53\u524D\u65B9\u5411\u7684\u5F00\u4ED3\u6761\u4EF6\u3002'
+                    : (failedReasons.length
+                        ? `\u672A\u6EE1\u8DB3\u539F\u56E0: ${failedReasons.join(' | ')}`
+                        : '\u5F53\u524D\u6CA1\u6709\u989D\u5916\u7684\u5931\u8D25\u539F\u56E0\u3002');
 
                 existingItems.delete(row.symbol);
             });
 
             existingItems.forEach(item => item.remove());
-
-            const ordered = filteredRows
+            filteredRows
                 .map(row => container.querySelector(`.ranking-item[data-symbol="${CSS.escape(row.symbol)}"]`))
-                .filter(Boolean);
-            ordered.forEach(item => container.appendChild(item));
+                .filter(Boolean)
+                .forEach(item => container.appendChild(item));
         }
 
         function renderScanDiagnostics(rows) {
             const container = document.getElementById('scanDiagnostics');
-            if ((!rows || !rows.length) && latestScanRows.length) {
-                rows = latestScanRows;
-            }
-            if (!rows || !rows.length) {
+            const sourceRows = rows && rows.length ? rows : latestScanRows;
+            if (!sourceRows || !sourceRows.length) {
                 if (!container.querySelector('.scan-empty')) {
-                    container.innerHTML = '<div class="card scan-empty">暂无扫描结果</div>';
+                    container.innerHTML = '<div class="card scan-empty">\u6682\u65E0\u626B\u63CF\u7ED3\u679C</div>';
                 }
                 return;
             }
-            latestScanRows = rows;
 
+            latestScanRows = sourceRows;
             const emptyCard = container.querySelector('.scan-empty');
             if (emptyCard) emptyCard.remove();
 
@@ -541,12 +629,14 @@
                 Array.from(container.querySelectorAll('.scan-card[data-symbol]')).map(card => [card.dataset.symbol, card])
             );
 
-            rows.forEach(row => {
-                const preferredLong = row.long_score >= row.short_score;
+            sourceRows.forEach(row => {
+                const preferredLong = Number(row.long_score || 0) >= Number(row.short_score || 0);
                 const conditionRows = preferredLong ? (row.long_conditions || []) : (row.short_conditions || []);
-                const sideText = preferredLong ? '做多' : '做空';
-                const sideEmoji = preferredLong ? '🚀' : '🔻';
-                const statusText = row.long_ready || row.short_ready ? '✅ 已满足至少一侧开仓条件' : '⚠ 当前尚未达到开仓条件';
+                const sideText = preferredLong ? '\u504F\u5411\u505A\u591A' : '\u504F\u5411\u505A\u7A7A';
+                const sideEmoji = preferredLong ? '\u{1F680}' : '\u{1F53B}';
+                const statusText = row.long_ready || row.short_ready
+                    ? '\u5DF2\u6EE1\u8DB3\u81F3\u5C11\u4E00\u4FA7\u5F00\u4ED3\u6761\u4EF6'
+                    : '\u5F53\u524D\u5C1A\u672A\u8FBE\u5230\u5F00\u4ED3\u6761\u4EF6';
                 let card = existingCards.get(row.symbol);
 
                 if (!card) {
@@ -562,7 +652,7 @@
                             <div class="scan-change"></div>
                         </div>
                         <div class="scan-stats">
-                            <div class="stat-box"><span>最新价格</span><strong class="scan-price"></strong></div>
+                            <div class="stat-box"><span>\u6700\u65B0\u4EF7\u683C</span><strong class="scan-price"></strong></div>
                             <div class="stat-box"><span>Funding</span><strong class="scan-funding"></strong></div>
                             <div class="stat-box"><span>ADX</span><strong class="scan-adx"></strong></div>
                             <div class="stat-box"><span>Stoch</span><strong class="scan-stoch"></strong></div>
@@ -574,22 +664,21 @@
                 }
 
                 card.querySelector('.scan-symbol').textContent = `${sideEmoji} ${row.symbol}`;
-                card.querySelector('.scan-bias').textContent = `偏向${sideText} · Long ${Number(row.long_score).toFixed(1)} / Short ${Number(row.short_score).toFixed(1)}`;
-
+                card.querySelector('.scan-bias').textContent =
+                    `${sideText} | Long ${Number(row.long_score || 0).toFixed(1)} / Short ${Number(row.short_score || 0).toFixed(1)}`;
                 const changeEl = card.querySelector('.scan-change');
                 changeEl.textContent = formatSigned(row.change_24h, 2, '%');
-                changeEl.className = `scan-change ${row.change_24h >= 0 ? 'positive' : 'negative'}`;
-
-                card.querySelector('.scan-price').textContent = Number(row.price).toFixed(4);
+                changeEl.className = `scan-change ${Number(row.change_24h || 0) >= 0 ? 'positive' : 'negative'}`;
+                card.querySelector('.scan-price').textContent = Number(row.price || 0).toFixed(4);
                 card.querySelector('.scan-funding').textContent = formatSigned(row.funding, 4, '%');
-                card.querySelector('.scan-adx').textContent = Number(row.adx).toFixed(1);
-                card.querySelector('.scan-stoch').textContent = Number(row.stoch).toFixed(1);
+                card.querySelector('.scan-adx').textContent = Number(row.adx || 0).toFixed(1);
+                card.querySelector('.scan-stoch').textContent = Number(row.stoch || 0).toFixed(1);
                 card.querySelector('.scan-status').textContent = statusText;
 
                 const reasonList = card.querySelector('.scan-reasons');
-                const nextReasonMarkup = conditionRows.map(item => `
-                    <span class="reason-chip ${item.ok ? 'positive' : 'warning'}">${item.emoji} ${item.label}</span>
-                `).join('');
+                const nextReasonMarkup = conditionRows.map(item => (
+                    `<span class="reason-chip ${item.ok ? 'positive' : 'warning'}">${item.emoji || (item.ok ? '\u2705' : '\u274C')} ${item.label}</span>`
+                )).join('');
                 if (reasonList.innerHTML !== nextReasonMarkup) {
                     reasonList.innerHTML = nextReasonMarkup;
                 }
@@ -598,11 +687,10 @@
             });
 
             existingCards.forEach(card => card.remove());
-
-            const orderedCards = rows
+            sourceRows
                 .map(row => container.querySelector(`.scan-card[data-symbol="${CSS.escape(row.symbol)}"]`))
-                .filter(Boolean);
-            orderedCards.forEach(card => container.appendChild(card));
+                .filter(Boolean)
+                .forEach(card => container.appendChild(card));
         }
 
         function updateMarketChart(stats) {
@@ -612,7 +700,7 @@
                 marketChart = new Chart(ctx, {
                     type: 'doughnut',
                     data: {
-                        labels: ['上涨', '下跌', '震荡'],
+                        labels: ['\u504F\u591A', '\u504F\u7A7A', '\u9707\u8361'],
                         datasets: [{
                             data: numbers,
                             backgroundColor: ['#00d084', '#ff5f6d', '#ffb020'],
@@ -640,6 +728,7 @@
         function applyRankingPayload(data) {
             if (!data || data.error) return;
             latestRankingPayload = data;
+
             const longSignature = data.ranking_signature?.long || '';
             const shortSignature = data.ranking_signature?.short || '';
             const longContainer = document.getElementById('longRanking');
@@ -653,15 +742,14 @@
                 renderRankingItems('shortRanking', data.short_rankings || [], 'short');
             }
 
-            const condition = data.market_condition || '未知';
-            const emoji = condition === '上涨' ? '🟢' : (condition === '下跌' ? '🔴' : '🟡');
-            document.getElementById('marketCondition').textContent = `${emoji} ${condition}`;
+            const condition = data.market_condition || '\u672A\u77E5';
+            document.getElementById('marketCondition').textContent = `${getMarketConditionEmoji(condition)} ${condition}`;
 
             const chartUpdated = data.market_stats?.updated_at || '';
             if (chartUpdated !== lastMarketUpdate) {
                 lastMarketUpdate = chartUpdated;
                 updateMarketChart(data.market_stats || {});
-                document.getElementById('marketUpdatedAt').textContent = `扇形图更新时间: ${chartUpdated || '--'} · 30min 刷新`;
+                document.getElementById('marketUpdatedAt').textContent = `\u6700\u8FD1\u66F4\u65B0: ${chartUpdated || '--'} | \u56FE\u8868 30 \u5206\u949F\u5237\u65B0`;
             }
 
             const nextScanSignature = data.scan_signature || '';
@@ -669,9 +757,6 @@
             if (nextScanSignature !== lastScanSignature || !scanContainer.querySelector('.scan-card')) {
                 lastScanSignature = nextScanSignature;
                 renderScanDiagnostics(data.scan_details || []);
-            }
-            if (data.timestamp) {
-                document.getElementById('serverTime').textContent = `服务器时间: ${data.timestamp}`;
             }
         }
 
@@ -683,7 +768,7 @@
                 const data = await response.json();
                 applyRankingPayload(data);
             } catch (error) {
-                console.error('获取排行榜失败', error);
+                console.error('\u83B7\u53D6\u6392\u884C\u699C\u5931\u8D25', error);
             } finally {
                 isFetchingRankings = false;
             }
@@ -697,21 +782,35 @@
                 const data = await response.json();
                 const botRunning = !!data.bot_running;
                 const connectionState = data.bot_connection?.state || 'unknown';
-                let botStatusText = '机器人已停止';
+                const status = data.status || {};
+                const mode = status.mode || 'testnet';
+                const modeLabel = status.mode_label || getModeLabel(mode);
+                latestRuntimeMode = mode;
+                latestRuntimeRunning = botRunning;
+
+                let botStatusText = '\u672A\u8FD0\u884C';
                 let botStatusColor = '#ff5f6d';
                 if (botRunning && connectionState === 'limited') {
-                    botStatusText = '连接受限';
+                    botStatusText = `${modeLabel}\u8FDE\u63A5\u53D7\u9650`;
                     botStatusColor = '#ffb020';
                 } else if (botRunning) {
-                    botStatusText = '机器人运行中';
+                    botStatusText = `${modeLabel}\u8FD0\u884C\u4E2D`;
                     botStatusColor = '#00d084';
                 }
+
                 document.getElementById('botStatus').textContent = botStatusText;
                 document.getElementById('botStatusDot').style.background = botStatusColor;
+                document.getElementById('botModeLabel').textContent = modeLabel;
+                if (!modeSelectionDirty) {
+                    selectedMode = mode === 'real' ? 'real' : 'testnet';
+                    renderModeButtons();
+                }
 
-                const status = data.status || {};
-                document.getElementById('balance').textContent = Number(status.balance || 0).toFixed(2);
+                document.getElementById('balanceLabel').textContent =
+                    mode === 'paper' ? '\u6A21\u62DF\u6743\u76CA' : (mode === 'testnet' ? '\u4FDD\u8BC1\u91D1\u4F59\u989D' : '\u8D26\u6237\u4F59\u989D');
+                document.getElementById('balance').textContent = Number(status.balance || status.equity || 0).toFixed(2);
                 document.getElementById('positionCount').textContent = status.position_count || (status.positions || []).length || 0;
+                document.getElementById('runDataFile').textContent = status.data_file_path || status.database_path || '--';
 
                 const perf = data.performance || {};
                 const todayPnl = Number(perf.today_pnl || 0);
@@ -721,36 +820,34 @@
                 const todayEl = document.getElementById('todayPnl');
                 todayEl.textContent = `${todayPnl >= 0 ? '+' : ''}${todayPnl.toFixed(2)} USDT`;
                 todayEl.className = `metric-value ${todayPnl >= 0 ? 'positive' : 'negative'}`;
-                document.getElementById('todayTrades').textContent = `今日交易 ${perf.today_trades || 0} 笔`;
+                document.getElementById('todayTrades').textContent = `\u4ECA\u65E5\u4EA4\u6613 ${perf.today_trades || 0} \u7B14`;
 
                 const totalEl = document.getElementById('totalPnl');
                 totalEl.textContent = `${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} USDT`;
                 totalEl.className = `metric-value ${totalPnl >= 0 ? 'positive' : 'negative'}`;
-                document.getElementById('totalStats').textContent = `累计 ${perf.total_trades || 0} 笔交易`;
+                document.getElementById('totalStats').textContent = `\u7D2F\u8BA1 ${perf.total_trades || 0} \u7B14\u4EA4\u6613`;
 
                 const winEl = document.getElementById('winRateValue');
                 winEl.textContent = `${winRate.toFixed(1)}%`;
                 winEl.className = `metric-value ${winRate >= 50 ? 'positive' : 'warning'}`;
-                document.getElementById('winRateDetail').textContent = `盈利 ${perf.winning_trades || 0} / 亏损 ${perf.losing_trades || 0}`;
+                document.getElementById('winRateDetail').textContent =
+                    `\u80DC ${perf.winning_trades || 0} / \u8D1F ${perf.losing_trades || 0}`;
 
                 const positions = data.positions || [];
                 const tbody = document.getElementById('positionsTable');
                 const existingRows = new Map(
                     Array.from(tbody.querySelectorAll('tr[data-symbol]')).map(row => [row.dataset.symbol, row])
                 );
-                const emptyRow = tbody.querySelector('tr[data-empty]');
+
                 if (!positions.length) {
-                    if (!emptyRow) {
-                        tbody.innerHTML = '<tr data-empty="1"><td colspan="7">暂无持仓</td></tr>';
-                    }
+                    tbody.innerHTML = '<tr><td colspan="7" class="metric-sub">\u6682\u65E0\u6301\u4ED3</td></tr>';
                 } else {
-                    if (emptyRow) emptyRow.remove();
-                    positions.forEach(row => {
-                        let tr = existingRows.get(row.symbol);
-                        if (!tr) {
-                            tr = document.createElement('tr');
-                            tr.dataset.symbol = row.symbol || '';
-                            tr.innerHTML = `
+                    positions.forEach(pos => {
+                        let row = existingRows.get(pos.symbol);
+                        if (!row) {
+                            row = document.createElement('tr');
+                            row.dataset.symbol = pos.symbol;
+                            row.innerHTML = `
                                 <td class="pos-symbol"></td>
                                 <td class="pos-side"></td>
                                 <td class="pos-size"></td>
@@ -759,33 +856,25 @@
                                 <td class="pos-pnl"></td>
                                 <td class="pos-lev"></td>
                             `;
-                            tbody.appendChild(tr);
+                            tbody.appendChild(row);
                         }
-                        tr.querySelector('.pos-symbol').textContent = row.symbol || '--';
-                        tr.querySelector('.pos-side').textContent = row.side || '--';
-                        tr.querySelector('.pos-size').textContent = Number(row.size || 0).toFixed(4);
-                        tr.querySelector('.pos-entry').textContent = Number(row.entry_price || 0).toFixed(4);
-                        tr.querySelector('.pos-mark').textContent = Number(row.mark_price || 0).toFixed(4);
-                        const pnlEl = tr.querySelector('.pos-pnl');
-                        pnlEl.textContent = `${Number(row.pnl_pct || 0).toFixed(2)}%`;
-                        pnlEl.className = `pos-pnl ${Number(row.pnl_pct || 0) >= 0 ? 'positive' : 'negative'}`;
-                        tr.querySelector('.pos-lev').textContent = `${row.leverage || '--'}x`;
-                        existingRows.delete(row.symbol);
+                        row.querySelector('.pos-symbol').textContent = pos.symbol || '--';
+                        row.querySelector('.pos-side').textContent = pos.side === 'LONG' ? '\u505A\u591A' : '\u505A\u7A7A';
+                        row.querySelector('.pos-side').className = `pos-side ${pos.side === 'LONG' ? 'positive' : 'negative'}`;
+                        row.querySelector('.pos-size').textContent = Number(pos.size || 0).toFixed(4);
+                        row.querySelector('.pos-entry').textContent = Number(pos.entry_price || 0).toFixed(4);
+                        row.querySelector('.pos-mark').textContent = Number(pos.mark_price || 0).toFixed(4);
+                        const pnlPct = Number(pos.price_change_pct || 0);
+                        const pnlEl = row.querySelector('.pos-pnl');
+                        pnlEl.textContent = `${pnlPct.toFixed(2)}%`;
+                        pnlEl.className = `pos-pnl ${pnlPct >= 0 ? 'positive' : 'negative'}`;
+                        row.querySelector('.pos-lev').textContent = `${pos.leverage || 0}x`;
+                        existingRows.delete(pos.symbol);
                     });
                     existingRows.forEach(row => row.remove());
                 }
-
-                if (data.rankings) {
-                    applyRankingPayload({
-                        long_rankings: data.rankings.long || [],
-                        short_rankings: data.rankings.short || [],
-                        market_condition: data.rankings.market_condition,
-                        market_stats: data.rankings.market_stats,
-                        ranking_signature: data.rankings.signature || {}
-                    });
-                }
             } catch (error) {
-                console.error('获取总览失败', error);
+                console.error('\u83B7\u53D6\u603B\u89C8\u5931\u8D25', error);
             } finally {
                 isFetchingSummary = false;
             }
@@ -800,7 +889,7 @@
                 document.getElementById('prediction').textContent = data.prediction || '--';
                 document.getElementById('predictionMessage').textContent = data.message || '--';
             } catch (error) {
-                console.error('获取信号预测失败', error);
+                console.error('\u83B7\u53D6\u9884\u6D4B\u5931\u8D25', error);
             } finally {
                 isFetchingPrediction = false;
             }
@@ -810,37 +899,73 @@
             if (isFetchingLogs) return;
             isFetchingLogs = true;
             try {
-                const response = await fetch(`/api/logs?lines=140&t=${Date.now()}`);
+                const response = await fetch(`/api/logs?lines=${maxLogRows}&t=${Date.now()}`);
                 const data = await response.json();
                 const logs = data.logs || [];
                 const hash = logs.map(item => `${item.timestamp}${item.line}`).join('|');
                 if (hash === lastLogHash) return;
                 lastLogHash = hash;
                 const container = document.getElementById('logs');
-                const shouldStickToBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
-                const existingRows = Array.from(container.querySelectorAll('.log-row'));
-                while (existingRows.length > logs.length) {
-                    existingRows.pop().remove();
-                }
-                logs.forEach((item, index) => {
-                    let row = existingRows[index];
-                    if (!row) {
-                        row = document.createElement('div');
-                        row.className = 'log-row';
-                        row.innerHTML = '<span class="log-time"></span><span class="log-text"></span>';
-                        container.appendChild(row);
+                const shouldStickToBottom = autoScrollLogs;
+                const hadRows = container.querySelectorAll('.log-row').length > 0;
+                const existingKeys = new Set(
+                    Array.from(container.querySelectorAll('.log-row')).map(row => row.dataset.key)
+                );
+                const freshRows = [];
+
+                logs.forEach((item) => {
+                    const rowKey = `${item.timestamp || '--'}|${item.line || ''}`;
+                    if (existingKeys.has(rowKey)) {
+                        return;
                     }
+                    const row = document.createElement('div');
+                    row.className = 'log-row';
+                    row.dataset.key = rowKey;
+                    row.innerHTML = '<span class="log-time"></span><span class="log-text"></span>';
                     const text = (item.line || '').replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,\.\d]*\s+-\s+\w+\s+-\s+/, '');
                     row.querySelector('.log-time').textContent = item.timestamp || '--';
                     const textEl = row.querySelector('.log-text');
-                    textEl.textContent = text;
+                    textEl.textContent = text || '--';
                     textEl.className = `log-text log-${item.level || 'INFO'}`;
+                    freshRows.push({ row, rowKey, timestamp: item.timestamp || '--' });
                 });
+
+                if (freshRows.length) {
+                    const separatorLabel = freshRows[freshRows.length - 1].timestamp;
+                    if (hadRows && separatorLabel !== lastLogRefreshLabel) {
+                        const separator = document.createElement('div');
+                        separator.className = 'log-separator';
+                        separator.textContent = `刷新 ${separatorLabel}`;
+                        container.appendChild(separator);
+                        lastLogRefreshLabel = separatorLabel;
+                    }
+
+                    freshRows.forEach(({ row, rowKey }) => {
+                        container.appendChild(row);
+                        existingKeys.add(rowKey);
+                    });
+                }
+
+                let rows = Array.from(container.querySelectorAll('.log-row'));
+                while (rows.length > maxLogRows) {
+                    const row = rows.shift();
+                    if (row) row.remove();
+                    rows = Array.from(container.querySelectorAll('.log-row'));
+                }
+
+                Array.from(container.querySelectorAll('.log-separator')).forEach((separator) => {
+                    const next = separator.nextElementSibling;
+                    const prev = separator.previousElementSibling;
+                    if (!next || !next.classList.contains('log-row') || !prev || !prev.classList.contains('log-row')) {
+                        separator.remove();
+                    }
+                });
+
                 if (shouldStickToBottom) {
                     container.scrollTop = container.scrollHeight;
                 }
             } catch (error) {
-                console.error('获取日志失败', error);
+                console.error('\u83B7\u53D6\u65E5\u5FD7\u5931\u8D25', error);
             } finally {
                 isFetchingLogs = false;
             }
@@ -860,38 +985,106 @@
         }
 
         async function startBot() {
-            if (!confirm('确定启动机器人吗？')) return;
-            const response = await fetch('/api/bot/start', { method: 'POST' });
+            const mode = selectedMode || 'testnet';
+            const modeLabel = getModeLabel(mode);
+            const switchingMode = latestRuntimeRunning && latestRuntimeMode && latestRuntimeMode !== mode;
+            const actionText = switchingMode
+                ? `\u5207\u6362\u5230 ${modeLabel} \u5E76\u81EA\u52A8\u91CD\u542F\u673A\u5668\u4EBA`
+                : `\u542F\u52A8 ${modeLabel} \u673A\u5668\u4EBA`;
+            if (!confirm(`\u786E\u8BA4\u8981${actionText}\u5417\uFF1F`)) return;
+
+            const endpoint = switchingMode ? '/api/bot/restart' : '/api/bot/start';
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode })
+            });
             const data = await response.json();
-            alert(data.message || '已提交');
+            modeSelectionDirty = false;
+            alert(data.message || '\u64CD\u4F5C\u5DF2\u63D0\u4EA4');
             refreshData();
         }
 
         async function stopBot() {
-            if (!confirm('确定停止机器人吗？')) return;
+            if (!confirm('\u786E\u8BA4\u505C\u6B62\u5F53\u524D\u673A\u5668\u4EBA\u5417\uFF1F')) return;
             const response = await fetch('/api/bot/stop', { method: 'POST' });
             const data = await response.json();
-            alert(data.message || '已提交');
+            modeSelectionDirty = false;
+            alert(data.message || '\u505C\u6B62\u8BF7\u6C42\u5DF2\u63D0\u4EA4');
             refreshData();
         }
 
         async function restartBot() {
-            if (!confirm('确定重启机器人吗？')) return;
-            const response = await fetch('/api/bot/restart', { method: 'POST' });
+            const mode = selectedMode || 'testnet';
+            const modeLabel = getModeLabel(mode);
+            if (!confirm(`\u786E\u8BA4\u91CD\u542F\u4E3A ${modeLabel} \u6A21\u5F0F\u5417\uFF1F`)) return;
+            const response = await fetch('/api/bot/restart', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode })
+            });
             const data = await response.json();
-            alert(data.message || '已提交');
+            modeSelectionDirty = false;
+            alert(data.message || '\u91CD\u542F\u8BF7\u6C42\u5DF2\u63D0\u4EA4');
             refreshData();
+        }
+
+        async function switchModeFromSelector(mode) {
+            const targetMode = mode || selectedMode || 'testnet';
+            const modeLabel = getModeLabel(targetMode);
+            selectedMode = targetMode;
+            renderModeButtons();
+
+            if (!latestRuntimeRunning) {
+                modeSelectionDirty = true;
+                return;
+            }
+
+            if (latestRuntimeMode === targetMode) {
+                modeSelectionDirty = false;
+                return;
+            }
+
+            const confirmed = confirm(`\u786E\u8BA4\u5207\u6362\u5230 ${modeLabel} \u5417\uFF1F\\n\\n\u5207\u6362\u73AF\u5883\u4F1A\u81EA\u52A8\u91CD\u542F\u673A\u5668\u4EBA\u3002`);
+            if (!confirmed) {
+                selectedMode = latestRuntimeMode === 'real' ? 'real' : 'testnet';
+                renderModeButtons();
+                modeSelectionDirty = false;
+                return;
+            }
+
+            const response = await fetch('/api/bot/restart', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: targetMode })
+            });
+            const data = await response.json();
+            modeSelectionDirty = false;
+            alert(data.message || '\u5207\u6362\u8BF7\u6C42\u5DF2\u63D0\u4EA4');
+            refreshData();
+        }
+
+        async function exportPaperRun() {
+            const response = await fetch('/api/paper/export', { method: 'POST' });
+            const data = await response.json();
+            if (data.output_path) {
+                document.getElementById('exportedReportFile').textContent = data.output_path;
+            }
+            alert(data.message + (data.output_path ? `\n\n\u5BFC\u51FA\u6587\u4EF6: ${data.output_path}` : ''));
         }
 
         async function checkIP() {
             document.getElementById('ipPanel').style.display = 'block';
-            document.getElementById('ipMessage').textContent = '检查中...';
+            document.getElementById('ipMessage').textContent = '\u6B63\u5728\u68C0\u6D4B...';
             const response = await fetch('/api/ip/check', { method: 'POST' });
             const data = await response.json();
             document.getElementById('currentIP').textContent = data.current_ip || '--';
             document.getElementById('binanceStatus').textContent = data.binance_status || '--';
             document.getElementById('ipCachedAt').textContent = data.cached_at || '--';
-            document.getElementById('ipMessage').textContent = data.ip_changed ? '⚠ IP 发生变化，请检查白名单。' : '✅ IP 与连接状态正常。';
+            document.getElementById('ipMessage').textContent =
+                data.ip_changed
+                    ? '\u68C0\u6D4B\u5230\u51FA\u53E3 IP \u5DF2\u53D8\u5316\uFF0C\u8BF7\u786E\u8BA4\u4EE3\u7406\u73AF\u5883\u662F\u5426\u7B26\u5408\u9884\u671F\u3002'
+                    : '\u51FA\u53E3 IP \u672A\u53D8\u5316\u3002';
         }
 
         function refreshData() {
@@ -909,14 +1102,19 @@
             }
         });
 
+        document.getElementById('autoScrollToggle').addEventListener('change', (event) => {
+            autoScrollLogs = event.target.checked;
+        });
+
         updateBeijingTime();
+        renderModeButtons();
         refreshData();
         connectRankingStream();
         setInterval(updateBeijingTime, 1000);
         setInterval(fetchSummary, 15000);
         setInterval(fetchRankings, 30000);
         setInterval(fetchPrediction, 30000);
-        setInterval(fetchLogs, 3000);
+        setInterval(fetchLogs, 5000);
     </script>
 </body>
 </html>

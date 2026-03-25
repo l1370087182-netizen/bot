@@ -21,6 +21,8 @@ import pytz
 import requests
 from flask import Flask, Response, jsonify, request, send_file
 from flask_cors import CORS
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
@@ -35,6 +37,7 @@ from config import (  # noqa: E402
     SYMBOLS,
 )
 from strategy import Strategy  # noqa: E402
+from paper_run_export import export_paper_run  # noqa: E402
 
 
 app = Flask(__name__)
@@ -65,7 +68,7 @@ def to_beijing_time(dt):
         except ValueError:
             return dt
     if dt.tzinfo is None:
-        dt = pytz.UTC.localize(dt)
+        dt = BEIJING_TZ.localize(dt)
     return dt.astimezone(BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -110,14 +113,34 @@ def get_ban_wait_seconds():
 
 class BotManager:
     @staticmethod
+    def _mode_label(mode):
+        if mode == "testnet":
+            return "Binance Testnet"
+        if mode == "paper":
+            return "本地模拟盘"
+        if mode == "real":
+            return "实盘"
+        return "未知模式"
+
+    @staticmethod
     def _find_processes():
         for proc in psutil.process_iter(["pid", "cmdline"]):
             try:
                 cmdline = " ".join(proc.info["cmdline"] or [])
-                if "bot.py" in cmdline and "--real" in cmdline:
+                if "bot.py" in cmdline and "web_server.py" not in cmdline:
                     yield proc
             except Exception:
                 continue
+
+    @staticmethod
+    def _mode_from_cmdline(proc):
+        try:
+            cmdline = " ".join(proc.info["cmdline"] or [])
+            if "--testnet" in cmdline:
+                return "testnet"
+            return "real" if "--real" in cmdline else "paper"
+        except Exception:
+            return "unknown"
 
     @staticmethod
     def is_running():
@@ -134,20 +157,60 @@ class BotManager:
         return None
 
     @staticmethod
+    def get_running_mode():
+        for proc in BotManager._find_processes():
+            return BotManager._mode_from_cmdline(proc)
+        try:
+            if os.path.exists(STATUS_FILE):
+                with open(STATUS_FILE, "r", encoding="utf-8") as handle:
+                    status = json.load(handle)
+                if status.get("mode"):
+                    return status.get("mode")
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
     def _kill_all_bots():
         for proc in BotManager._find_processes():
             try:
                 proc.terminate()
             except Exception:
                 continue
-        time.sleep(1)
-        if os.path.exists(PID_FILE):
-            os.remove(PID_FILE)
+        BotManager._wait_until_stopped(timeout=12)
 
     @staticmethod
-    def start():
+    def _wait_until_stopped(timeout=12):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            running = list(BotManager._find_processes())
+            if not running:
+                if os.path.exists(PID_FILE):
+                    os.remove(PID_FILE)
+                return True
+            time.sleep(0.5)
+        for proc in BotManager._find_processes():
+            try:
+                proc.kill()
+            except Exception:
+                continue
+        time.sleep(1)
+        running = list(BotManager._find_processes())
+        if not running and os.path.exists(PID_FILE):
+            os.remove(PID_FILE)
+        return not running
+
+    @staticmethod
+    def start(mode="testnet"):
         if BotManager.is_running():
-            return {"success": False, "message": "机器人已经在运行中"}
+            running_mode = BotManager.get_running_mode() or "unknown"
+            if running_mode in {"paper", "testnet", "real"} and running_mode != mode:
+                BotManager.stop()
+                if not BotManager._wait_until_stopped(timeout=12):
+                    return {"success": False, "message": "切换模式失败，旧机器人进程未能完全退出"}
+            else:
+                running_label = "Binance Testnet" if running_mode == "testnet" else ("本地模拟盘" if running_mode == "paper" else "实盘")
+                return {"success": False, "message": f"机器人已经在运行中（{running_label}）"}
 
         BotManager._kill_all_bots()
 
@@ -155,11 +218,31 @@ class BotManager:
             import shutil
 
             python_exe = shutil.which("python") or shutil.which("pythonw") or "python.exe"
+            command = [python_exe, BOT_SCRIPT]
+            if mode == "real":
+                command.append("--real")
+            elif mode == "testnet":
+                command.extend(["--real", "--testnet"])
             with open(LOG_FILE, "w", encoding="utf-8") as handle:
                 handle.write("")
+            with open(STATUS_FILE, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "status": "starting",
+                        "mode": mode,
+                        "mode_label": BotManager._mode_label(mode),
+                        "dry_run": mode != "real",
+                        "testnet": mode == "testnet",
+                        "timestamp": time.time(),
+                        "updated_at": datetime.now(BEIJING_TZ).isoformat(timespec="seconds"),
+                    },
+                    handle,
+                    ensure_ascii=False,
+                    indent=2,
+                )
             with open(LOG_FILE, "a", encoding="utf-8") as log_handle:
                 process = subprocess.Popen(
-                    [python_exe, BOT_SCRIPT, "--real"],
+                    command,
                     stdout=log_handle,
                     stderr=subprocess.STDOUT,
                     cwd=BOT_DIR,
@@ -167,9 +250,10 @@ class BotManager:
                 )
             with open(PID_FILE, "w", encoding="utf-8") as handle:
                 handle.write(str(process.pid))
-            time.sleep(3)
+            time.sleep(8)
             if BotManager.is_running():
-                return {"success": True, "message": f"机器人已启动 (PID: {process.pid})"}
+                mode_label = "Binance Testnet" if mode == "testnet" else ("本地模拟盘" if mode == "paper" else "实盘")
+                return {"success": True, "message": f"{mode_label}机器人已启动 (PID: {process.pid})"}
             return {"success": False, "message": "进程启动后异常退出，请检查日志"}
         except Exception as exc:
             return {"success": False, "message": f"启动失败: {exc}"}
@@ -177,14 +261,20 @@ class BotManager:
     @staticmethod
     def stop():
         try:
-            pid = BotManager.get_running_pid()
-            if pid:
-                psutil.Process(int(pid)).terminate()
-                time.sleep(2)
-                if BotManager.is_running():
-                    psutil.Process(int(pid)).kill()
+            BotManager._kill_all_bots()
             if os.path.exists(PID_FILE):
                 os.remove(PID_FILE)
+            if os.path.exists(STATUS_FILE):
+                try:
+                    with open(STATUS_FILE, "r", encoding="utf-8") as handle:
+                        status = json.load(handle)
+                    status["status"] = "stopped"
+                    status["timestamp"] = time.time()
+                    status["updated_at"] = datetime.now().isoformat(timespec="seconds")
+                    with open(STATUS_FILE, "w", encoding="utf-8") as handle:
+                        json.dump(status, handle, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
             time.sleep(1)
             if not BotManager.is_running():
                 return {"success": True, "message": "机器人已停止"}
@@ -193,10 +283,10 @@ class BotManager:
             return {"success": False, "message": f"停止失败: {exc}"}
 
     @staticmethod
-    def restart():
+    def restart(mode="testnet"):
         BotManager.stop()
-        time.sleep(2)
-        return BotManager.start()
+        BotManager._wait_until_stopped(timeout=12)
+        return BotManager.start(mode=mode)
 
 
 class LogReader:
@@ -250,6 +340,41 @@ class LogReader:
             return [{"line": f"读取日志失败: {exc}", "level": "ERROR", "timestamp": ""}]
 
     @staticmethod
+    def build_scan_logs(scan_details, timestamp=None):
+        if not scan_details:
+            return []
+        ts = timestamp or to_beijing_time(datetime.now())
+        symbol_order = {
+            symbol.replace(":USDT", "").replace(":USD", ""): index
+            for index, symbol in enumerate(TRACKED_SYMBOLS)
+        }
+        entries = []
+        for row in sorted(scan_details, key=lambda item: symbol_order.get(item.get("symbol", ""), 999)):
+            preferred_long = float(row.get("long_score", 0) or 0) >= float(row.get("short_score", 0) or 0)
+            side_label = "做多" if preferred_long else "做空"
+            score = float(row.get("long_score", 0) or 0) if preferred_long else float(row.get("short_score", 0) or 0)
+            reasons = row.get("long_failed", []) if preferred_long else row.get("short_failed", [])
+            ready = bool(row.get("long_ready")) if preferred_long else bool(row.get("short_ready"))
+            detail = "已满足开仓条件" if ready else ("未满足: " + (" | ".join(reasons[:3]) if reasons else "暂无阻断原因"))
+            if row.get("stale") and row.get("refresh_error"):
+                detail = f"{detail} | {row['refresh_error']}"
+            entries.append(
+                {
+                    "line": (
+                        f"[SCAN] {row.get('symbol')} | 偏向{side_label} | score:{score:.1f} | "
+                        f"Long:{float(row.get('long_score', 0) or 0):.1f} / "
+                        f"Short:{float(row.get('short_score', 0) or 0):.1f} | "
+                        f"ADX:{float(row.get('adx', 0) or 0):.1f} | "
+                        f"Stoch:{float(row.get('stoch', 0) or 0):.1f} | "
+                        f"Funding:{float(row.get('funding', 0) or 0):+.4f}% | {detail}"
+                    ),
+                    "level": "SIGNAL",
+                    "timestamp": ts,
+                }
+            )
+        return entries
+
+    @staticmethod
     def search_logs(keyword, lines=50):
         try:
             if not os.path.exists(LOG_FILE):
@@ -281,16 +406,34 @@ class WebDashboard:
     def __init__(self):
         self.strategy = Strategy(TRACKED_SYMBOLS)
         self.session = requests.Session()
-        self.snapshot_ttl = 5
-        self.snapshot_refresh_interval = 5
+        retry = Retry(
+            total=2,
+            read=2,
+            connect=2,
+            backoff_factor=0.4,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=frozenset(["GET"]),
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry, pool_connections=20, pool_maxsize=20)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
+        self.snapshot_ttl = 8
+        self.snapshot_refresh_interval = 8
         self.market_chart_ttl = 1800
         self.snapshot_cache = None
         self.snapshot_cache_time = 0.0
         self.market_chart_cache = None
         self.market_chart_cache_time = 0.0
+        self.market_context_cache = {"ticker_map": {}, "funding_map": {}, "timestamp": 0.0}
+        self.klines_cache = {}
+        self.scan_row_cache = {}
         self.cache_lock = threading.Lock()
         self.refresh_lock = threading.Lock()
         self.stop_event = threading.Event()
+        self.market_context_ttl = 15.0
+        self.klines_cache_ttl = max(15.0, self.snapshot_refresh_interval * 2)
+        self.max_scan_workers = min(2, max(1, len(TRACKED_SYMBOLS)))
 
         if PROXY_ENABLED and PROXY_URL:
             self.session.proxies.update({"http": PROXY_URL, "https": PROXY_URL})
@@ -299,27 +442,47 @@ class WebDashboard:
         self.refresh_thread = threading.Thread(target=self._snapshot_refresh_loop, name="dashboard-snapshot", daemon=True)
         self.refresh_thread.start()
 
-    def _request_binance(self, path, params=None):
+    def _request_binance(self, path, params=None, timeout=5):
         ban_wait = get_ban_wait_seconds()
         if ban_wait > 0:
             raise RuntimeError(f"Binance API rate limited, retry in {ban_wait:.0f}s")
-        response = self.session.get(
-            f"{BINANCE_FAPI_BASE}{path}",
-            params=params or {},
-            timeout=5,
-        )
-        if response.status_code == 418:
-            message = response.text
-            banned_match = re.search(r"banned until (\d{13})", message)
-            if banned_match:
-                save_ban_cache(int(banned_match.group(1)))
-            raise RuntimeError(message)
-        if response.status_code == 429:
-            save_ban_cache(int((time.time() + 120) * 1000))
-            raise RuntimeError(response.text)
-        response.raise_for_status()
-        clear_ban_cache()
-        return response.json()
+        last_error = None
+        for attempt in range(3):
+            try:
+                response = self.session.get(
+                    f"{BINANCE_FAPI_BASE}{path}",
+                    params=params or {},
+                    timeout=timeout,
+                )
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt < 2:
+                    time.sleep(0.4 * (attempt + 1))
+                    continue
+                raise RuntimeError(f"{path} request failed: {exc}") from exc
+
+            if response.status_code == 418:
+                message = response.text
+                banned_match = re.search(r"banned until (\d{13})", message)
+                if banned_match:
+                    save_ban_cache(int(banned_match.group(1)))
+                raise RuntimeError(message)
+            if response.status_code == 429:
+                save_ban_cache(int((time.time() + 120) * 1000))
+                raise RuntimeError(response.text)
+            if response.ok:
+                clear_ban_cache()
+                return response.json()
+
+            last_error = RuntimeError(f"{path} returned {response.status_code}: {response.text[:120]}")
+            if attempt < 2:
+                time.sleep(0.4 * (attempt + 1))
+                continue
+            response.raise_for_status()
+
+        if last_error:
+            raise last_error
+        raise RuntimeError(f"{path} request failed")
 
     def _snapshot_refresh_loop(self):
         while not self.stop_event.is_set():
@@ -380,18 +543,49 @@ class WebDashboard:
         return resampled
 
     def _fetch_symbol_klines(self, api_symbol, interval, limit):
-        rows = self._request_binance(
-            "/fapi/v1/klines",
-            {"symbol": api_symbol, "interval": interval, "limit": limit},
-        )
-        return self._ohlcv_to_df(rows)
+        cache_key = f"{api_symbol}:{interval}:{limit}"
+        now = time.time()
+        with self.cache_lock:
+            cached = self.klines_cache.get(cache_key)
+        if cached is not None and now - cached.get("timestamp", 0.0) < self.klines_cache_ttl:
+            return cached["df"].copy()
+        try:
+            rows = self._request_binance(
+                "/fapi/v1/klines",
+                {"symbol": api_symbol, "interval": interval, "limit": limit},
+                timeout=7,
+            )
+            df = self._ohlcv_to_df(rows)
+            with self.cache_lock:
+                self.klines_cache[cache_key] = {"df": df.copy(), "timestamp": time.time()}
+            return df
+        except Exception:
+            if cached is not None:
+                return cached["df"].copy()
+            raise
 
     def _fetch_market_context(self):
-        tickers = self._request_binance("/fapi/v1/ticker/24hr")
-        funding_rows = self._request_binance("/fapi/v1/premiumIndex")
-        ticker_map = {row["symbol"]: row for row in tickers}
-        funding_map = {row["symbol"]: float(row.get("lastFundingRate", 0) or 0) for row in funding_rows}
-        return ticker_map, funding_map
+        now = time.time()
+        with self.cache_lock:
+            cached = dict(self.market_context_cache)
+        if cached.get("ticker_map") and cached.get("funding_map") and now - cached.get("timestamp", 0.0) < self.market_context_ttl:
+            return cached["ticker_map"], cached["funding_map"]
+        try:
+            tickers = self._request_binance("/fapi/v1/ticker/24hr", timeout=7)
+            funding_rows = self._request_binance("/fapi/v1/premiumIndex", timeout=7)
+            ticker_map = {row["symbol"]: row for row in tickers}
+            funding_map = {row["symbol"]: float(row.get("lastFundingRate", 0) or 0) for row in funding_rows}
+            with self.cache_lock:
+                self.market_context_cache = {
+                    "ticker_map": ticker_map,
+                    "funding_map": funding_map,
+                    "timestamp": time.time(),
+                }
+            return ticker_map, funding_map
+        except Exception:
+            if cached.get("ticker_map") and cached.get("funding_map"):
+                return cached["ticker_map"], cached["funding_map"]
+            raise
 
     @staticmethod
     def _calc_cvd_strength(df):
@@ -507,6 +701,8 @@ class WebDashboard:
             "signal_bias": "LONG" if long_score >= short_score else "SHORT",
             "long_conditions": long_conditions,
             "short_conditions": short_conditions,
+            "stale": False,
+            "refresh_error": None,
         }
 
     def _fallback_symbol_row(self, symbol, ticker_map, funding_map, error):
@@ -514,6 +710,17 @@ class WebDashboard:
         display_symbol = self._display_symbol(symbol)
         ticker = ticker_map.get(api_symbol, {})
         funding_rate = float(funding_map.get(api_symbol, 0.0))
+        with self.cache_lock:
+            previous = self.scan_row_cache.get(display_symbol)
+        if previous:
+            row = dict(previous)
+            row["price"] = float(ticker.get("lastPrice", row.get("price", 0.0)))
+            row["change_24h"] = float(ticker.get("priceChangePercent", row.get("change_24h", 0.0)))
+            row["volume_24h"] = float(ticker.get("quoteVolume", row.get("volume_24h", 0.0)))
+            row["funding"] = round(funding_rate * 100, 4)
+            row["stale"] = True
+            row["refresh_error"] = f"⚠ 数据刷新失败，暂时使用上一轮有效缓存：{error}"
+            return row
         long_conditions = [
             self._condition_row("波动率过滤", False),
             self._condition_row(f"ADX>{INDICATORS['adx']['threshold']}", False),
@@ -557,6 +764,8 @@ class WebDashboard:
             "signal_bias": "LONG",
             "long_conditions": long_conditions,
             "short_conditions": short_conditions,
+            "stale": True,
+            "refresh_error": reason,
         }
 
     def _market_stats_from_tickers(self, ticker_map):
@@ -594,7 +803,7 @@ class WebDashboard:
                 self.market_chart_cache_time = time.time()
 
         scan_details = []
-        with ThreadPoolExecutor(max_workers=max(1, len(TRACKED_SYMBOLS))) as executor:
+        with ThreadPoolExecutor(max_workers=self.max_scan_workers) as executor:
             futures = {
                 executor.submit(self._analyze_symbol, symbol, ticker_map, funding_map): symbol
                 for symbol in TRACKED_SYMBOLS
@@ -602,7 +811,10 @@ class WebDashboard:
             for future in as_completed(futures):
                 symbol = futures[future]
                 try:
-                    scan_details.append(future.result())
+                    row = future.result()
+                    scan_details.append(row)
+                    with self.cache_lock:
+                        self.scan_row_cache[row["symbol"]] = dict(row)
                 except Exception as exc:
                     scan_details.append(self._fallback_symbol_row(symbol, ticker_map, funding_map, exc))
 
@@ -655,7 +867,8 @@ class WebDashboard:
         return payload
 
     def _refresh_snapshot(self):
-        if not self.refresh_lock.acquire(blocking=False):
+        lock_acquired = self.refresh_lock.acquire(blocking=False)
+        if not lock_acquired:
             with self.cache_lock:
                 return self.snapshot_cache
         try:
@@ -680,7 +893,8 @@ class WebDashboard:
                 "timestamp": to_beijing_time(datetime.now()),
             }
         finally:
-            self.refresh_lock.release()
+            if lock_acquired:
+                self.refresh_lock.release()
 
     def get_symbol_rankings(self, force=False):
         with self.cache_lock:
@@ -746,16 +960,40 @@ class WebDashboard:
             return {"status": "error", "message": str(exc)}
 
     def get_bot_status(self):
+        live_mode = BotManager.get_running_mode()
+        live_pid = BotManager.get_running_pid()
         try:
             if os.path.exists(STATUS_FILE):
                 with open(STATUS_FILE, "r", encoding="utf-8") as handle:
                     status = json.load(handle)
+                if live_mode:
+                    status["mode"] = live_mode
+                    status["mode_label"] = BotManager._mode_label(live_mode)
+                    status["dry_run"] = live_mode != "real"
+                    status["testnet"] = live_mode == "testnet"
+                if live_pid:
+                    status["pid"] = live_pid
                 if "timestamp" in status:
                     status["beijing_time"] = to_beijing_time(datetime.fromtimestamp(status["timestamp"]))
                 return status
         except Exception:
             pass
-        return {"status": "unknown", "balance": 0, "positions": []}
+        if live_mode:
+            return {
+                "status": "running" if BotManager.is_running() else "stopped",
+                "mode": live_mode,
+                "mode_label": BotManager._mode_label(live_mode),
+                "dry_run": live_mode != "real",
+                "testnet": live_mode == "testnet",
+                "pid": live_pid,
+                "timestamp": time.time(),
+                "updated_at": datetime.now(BEIJING_TZ).isoformat(timespec="seconds"),
+                "beijing_time": to_beijing_time(datetime.now(BEIJING_TZ)),
+                "balance": 0,
+                "equity": 0,
+                "positions": [],
+            }
+        return {"status": "unknown", "mode": "unknown", "balance": 0, "equity": 0, "positions": []}
 
     def get_performance_metrics(self):
         default = {
@@ -770,11 +1008,13 @@ class WebDashboard:
             "recent_trades": [],
         }
         try:
-            if not os.path.exists(DB_FILE):
+            status = self.get_bot_status()
+            db_path = status.get("database_path") or DB_FILE
+            if not os.path.exists(db_path):
                 default["error"] = "Database not found"
                 return default
 
-            conn = sqlite3.connect(DB_FILE)
+            conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='trades'")
             if not cursor.fetchone():
@@ -898,7 +1138,7 @@ def api_rankings():
 
 @app.route("/api/summary")
 def api_summary():
-    rankings = dashboard.get_symbol_rankings()
+    rankings = dashboard.get_symbol_rankings() or {}
     connection_state = LogReader.get_connection_state()
     return jsonify(
         {
@@ -921,12 +1161,22 @@ def api_summary():
 
 @app.route("/api/bot/status")
 def api_bot_status():
-    return jsonify({"running": BotManager.is_running(), "pid": BotManager.get_running_pid()})
+    return jsonify(
+        {
+            "running": BotManager.is_running(),
+            "pid": BotManager.get_running_pid(),
+            "mode": BotManager.get_running_mode(),
+        }
+    )
 
 
 @app.route("/api/bot/start", methods=["POST"])
 def api_bot_start():
-    return jsonify(BotManager.start())
+    payload = request.get_json(silent=True) or {}
+    mode = (payload.get("mode") or request.args.get("mode") or "testnet").lower()
+    if mode not in {"paper", "testnet", "real"}:
+        mode = "testnet"
+    return jsonify(BotManager.start(mode=mode))
 
 
 @app.route("/api/bot/stop", methods=["POST"])
@@ -936,16 +1186,45 @@ def api_bot_stop():
 
 @app.route("/api/bot/restart", methods=["POST"])
 def api_bot_restart():
-    return jsonify(BotManager.restart())
+    payload = request.get_json(silent=True) or {}
+    mode = (payload.get("mode") or request.args.get("mode") or BotManager.get_running_mode() or "testnet").lower()
+    if mode not in {"paper", "testnet", "real"}:
+        mode = "testnet"
+    return jsonify(BotManager.restart(mode=mode))
+
+
+@app.route("/api/paper/export", methods=["POST"])
+def api_paper_export():
+    status = dashboard.get_bot_status()
+    mode = status.get("mode")
+    data_file = status.get("data_file_path")
+    if mode not in {"paper", "testnet"} or not data_file:
+        return jsonify({"success": False, "message": "当前没有可导出的模拟/测试盘运行数据"})
+    try:
+        output_path = export_paper_run(data_file)
+        return jsonify(
+            {
+                "success": True,
+                "message": "测试盘周报导出成功",
+                "output_path": output_path,
+                "source_data_file": data_file,
+            }
+        )
+    except Exception as exc:
+        return jsonify({"success": False, "message": f"导出失败: {exc}"})
 
 
 @app.route("/api/logs")
 def api_logs():
     lines = request.args.get("lines", 120, type=int)
+    rankings = dashboard.get_symbol_rankings()
+    scan_details = rankings.get("scan_details", [])
+    synthetic_scan_logs = LogReader.build_scan_logs(scan_details, rankings.get("timestamp"))
+    file_log_limit = max(20, lines - len(synthetic_scan_logs))
     return jsonify(
         {
-            "logs": LogReader.get_recent_logs(lines),
-            "scan_details": dashboard.get_symbol_rankings().get("scan_details", []),
+            "logs": (LogReader.get_recent_logs(file_log_limit) + synthetic_scan_logs)[-lines:],
+            "scan_details": scan_details,
             "timestamp": to_beijing_time(datetime.now()),
         }
     )
